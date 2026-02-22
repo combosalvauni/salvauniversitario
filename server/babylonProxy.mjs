@@ -529,10 +529,15 @@ const server = createServer(async (req, res) => {
       const email = String(payload?.customer?.email || '').trim().toLowerCase();
       const name = String(payload?.customer?.name || '').trim() || 'Cliente';
       const phoneDigits = normalizeDigits(payload?.customer?.phone || '');
-      const amountCents = Number(payload?.amountCents);
       const requestedOfferName = String(payload?.offerName || '').trim();
       const allowedOfferNames = new Set(['Combo mensal', 'Combo trimestral', 'Combo semestral']);
       const offerName = allowedOfferNames.has(requestedOfferName) ? requestedOfferName : 'Combo mensal';
+      const offerAmountCentsByName = new Map([
+        ['Combo mensal', 3990],
+        ['Combo trimestral', 14370],
+        ['Combo semestral', 23790],
+      ]);
+      const amountCents = offerAmountCentsByName.get(offerName);
       const orderItems = Array.isArray(payload?.items) ? payload.items : [];
       const totalItems = orderItems.reduce((sum, item) => sum + Number(item?.quantity || 1), 0);
 
@@ -546,7 +551,7 @@ const server = createServer(async (req, res) => {
       if (!Number.isFinite(amountCents) || amountCents <= 0) {
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.writeHead(400);
-        res.end(JSON.stringify({ error: 'Valor inv├ílido para checkout' }));
+        res.end(JSON.stringify({ error: 'Oferta inválida para checkout' }));
         return;
       }
 
