@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 import { Buffer } from 'node:buffer';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import dotenv from 'dotenv';
 import { createClient } from '@supabase/supabase-js';
@@ -15,7 +15,10 @@ const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const nodeEnv = String(process.env.NODE_ENV || 'development').toLowerCase();
 const isProduction = nodeEnv === 'production';
-const requireApiAuth = String(process.env.BABYLON_PROXY_REQUIRE_AUTH || 'true').toLowerCase() !== 'false';
+const requireApiAuth = isProduction
+  ? true
+  : String(process.env.BABYLON_PROXY_REQUIRE_AUTH || 'true').toLowerCase() !== 'false';
+const publicAppUrl = String(process.env.PUBLIC_APP_URL || '').trim().replace(/\/$/, '');
 const allowedOrigins = new Set(
   String(
     process.env.BABYLON_ALLOWED_ORIGINS
@@ -68,6 +71,38 @@ function getBearerToken(req) {
   if (!header.toLowerCase().startsWith('bearer ')) return null;
   const token = header.slice(7).trim();
   return token || null;
+}
+
+async function authenticateRequestUser(req) {
+  const bearerToken = getBearerToken(req);
+  if (!bearerToken) {
+    return { user: null, status: 401, error: 'Unauthorized: missing bearer token' };
+  }
+
+  const { data: authData, error: authError } = await supabaseAdmin.auth.getUser(bearerToken);
+  if (authError || !authData?.user?.id) {
+    return { user: null, status: 401, error: 'Unauthorized: invalid bearer token' };
+  }
+
+  return { user: authData.user, status: 200, error: null };
+}
+
+async function assertAdminUser(userId) {
+  const { data: profile, error } = await supabaseAdmin
+    .from('profiles')
+    .select('role')
+    .eq('id', userId)
+    .maybeSingle();
+
+  if (error) {
+    return { ok: false, status: 500, error: 'Não foi possível validar perfil admin' };
+  }
+
+  if (!profile || profile.role !== 'admin') {
+    return { ok: false, status: 403, error: 'Forbidden: admin only' };
+  }
+
+  return { ok: true, status: 200, error: null };
 }
 
 function parseJsonSafe(buffer) {
@@ -200,10 +235,12 @@ function isTransactionCreatePath(pathname) {
 function ensureRequiredConfiguration(options = {}) {
   const requiresSupabase = options?.requiresSupabase !== false;
   const requiresWebhookToken = options?.requiresWebhookToken === true;
+  const requiresBabylonAuth = options?.requiresBabylonAuth !== false;
+  const requiresPublicAppUrl = options?.requiresPublicAppUrl === true;
   const issues = [];
   const hasAuthHeader = Boolean(getAuthHeader());
 
-  if (!hasAuthHeader) {
+  if (requiresBabylonAuth && !hasAuthHeader) {
     issues.push('Defina BABYLON_SECRET_KEY e BABYLON_COMPANY_ID.');
   }
 
@@ -217,6 +254,10 @@ function ensureRequiredConfiguration(options = {}) {
 
   if (isProduction && allowedOrigins.size === 0) {
     issues.push('Defina BABYLON_ALLOWED_ORIGINS com os domínios autorizados do frontend.');
+  }
+
+  if (requiresPublicAppUrl && !publicAppUrl) {
+    issues.push('Defina PUBLIC_APP_URL para geração segura de links públicos.');
   }
 
   return issues;
@@ -276,13 +317,20 @@ const server = createServer(async (req, res) => {
   const pathname = requestUrl.pathname;
   const needsSupabase = pathname === '/webhooks/babylon'
     || pathname.startsWith('/api/public/first-offer/checkout-status')
+    || pathname.startsWith('/api/admin/invite-links')
+    || pathname.startsWith('/api/babylon');
+  const needsBabylonAuth = pathname === '/webhooks/babylon'
+    || pathname.startsWith('/api/public/first-offer/checkout')
     || pathname.startsWith('/api/babylon');
   const needsWebhookToken = pathname === '/webhooks/babylon'
     && (isProduction || Boolean(process.env.BABYLON_WEBHOOK_TOKEN));
+  const needsPublicAppUrl = isProduction && pathname.startsWith('/api/admin/invite-links');
 
   const requiredConfigurationIssues = ensureRequiredConfiguration({
     requiresSupabase: needsSupabase,
+    requiresBabylonAuth: needsBabylonAuth,
     requiresWebhookToken: needsWebhookToken,
+    requiresPublicAppUrl: needsPublicAppUrl,
   });
   if (requiredConfigurationIssues.length) {
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -652,6 +700,226 @@ const server = createServer(async (req, res) => {
         message: error?.message || 'Erro desconhecido',
       }));
     }
+    return;
+  }
+
+  if (pathname === '/api/admin/invite-links' && req.method === 'GET') {
+    const authResult = await authenticateRequestUser(req);
+    if (!authResult.user) {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.writeHead(authResult.status);
+      res.end(JSON.stringify({ error: authResult.error }));
+      return;
+    }
+
+    const adminResult = await assertAdminUser(authResult.user.id);
+    if (!adminResult.ok) {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.writeHead(adminResult.status);
+      res.end(JSON.stringify({ error: adminResult.error }));
+      return;
+    }
+
+    const { data, error } = await supabaseAdmin
+      .from('admin_invite_links')
+      .select('id, created_at, updated_at, target_email, max_uses, used_count, grant_store_access, grant_credits, status, note, expires_at, last_used_at, last_used_by')
+      .order('created_at', { ascending: false })
+      .limit(100);
+
+    if (error) {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.writeHead(500);
+      res.end(JSON.stringify({ error: 'Erro ao listar convites', message: error.message }));
+      return;
+    }
+
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.writeHead(200);
+    res.end(JSON.stringify({ ok: true, invites: data || [] }));
+    return;
+  }
+
+  if (pathname === '/api/admin/invite-links' && req.method === 'POST') {
+    const authResult = await authenticateRequestUser(req);
+    if (!authResult.user) {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.writeHead(authResult.status);
+      res.end(JSON.stringify({ error: authResult.error }));
+      return;
+    }
+
+    const adminResult = await assertAdminUser(authResult.user.id);
+    if (!adminResult.ok) {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.writeHead(adminResult.status);
+      res.end(JSON.stringify({ error: adminResult.error }));
+      return;
+    }
+
+    const requestBody = await readRequestBody(req);
+    const payload = parseJsonSafe(requestBody) || {};
+
+    const expiresInDaysRaw = Number(payload?.expiresInDays);
+    const expiresInDays = Number.isFinite(expiresInDaysRaw)
+      ? Math.min(Math.max(Math.round(expiresInDaysRaw), 1), 90)
+      : 7;
+
+    const targetEmailRaw = String(payload?.targetEmail || '').trim().toLowerCase();
+    const targetEmail = targetEmailRaw || null;
+    const maxUsesRaw = Number(payload?.maxUses);
+    const maxUses = Number.isFinite(maxUsesRaw)
+      ? Math.min(Math.max(Math.round(maxUsesRaw), 1), 100)
+      : 1;
+    const grantCreditsRaw = Number(payload?.grantCredits);
+    const grantCredits = Number.isFinite(grantCreditsRaw)
+      ? Math.min(Math.max(Math.round(grantCreditsRaw), 0), 1000000)
+      : 0;
+    const grantStoreAccess = payload?.grantStoreAccess !== false;
+    const note = String(payload?.note || '').trim().slice(0, 300) || null;
+
+    if (targetEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(targetEmail)) {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.writeHead(400);
+      res.end(JSON.stringify({ error: 'targetEmail inválido' }));
+      return;
+    }
+
+    const token = `${randomUUID()}${randomBytes(24).toString('hex')}`;
+    const tokenHash = createHash('sha256').update(token).digest('hex');
+    const expiresAt = new Date(Date.now() + (expiresInDays * 24 * 60 * 60 * 1000)).toISOString();
+
+    const { data, error } = await supabaseAdmin
+      .from('admin_invite_links')
+      .insert({
+        token_hash: tokenHash,
+        created_by: authResult.user.id,
+        target_email: targetEmail,
+        max_uses: maxUses,
+        grant_store_access: grantStoreAccess,
+        grant_credits: grantCredits,
+        note,
+        expires_at: expiresAt,
+      })
+      .select('id, created_at, target_email, max_uses, used_count, grant_store_access, grant_credits, status, note, expires_at')
+      .single();
+
+    if (error) {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.writeHead(500);
+      res.end(JSON.stringify({ error: 'Erro ao criar convite', message: error.message }));
+      return;
+    }
+
+    const inviteBaseUrl = publicAppUrl || origin || 'http://localhost:5173';
+    const inviteUrl = `${inviteBaseUrl}/login?invite=${encodeURIComponent(token)}`;
+
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.writeHead(200);
+    res.end(JSON.stringify({
+      ok: true,
+      invite: data,
+      inviteUrl,
+    }));
+    return;
+  }
+
+  if (pathname === '/api/admin/invite-links/revoke' && req.method === 'POST') {
+    const authResult = await authenticateRequestUser(req);
+    if (!authResult.user) {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.writeHead(authResult.status);
+      res.end(JSON.stringify({ error: authResult.error }));
+      return;
+    }
+
+    const adminResult = await assertAdminUser(authResult.user.id);
+    if (!adminResult.ok) {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.writeHead(adminResult.status);
+      res.end(JSON.stringify({ error: adminResult.error }));
+      return;
+    }
+
+    const requestBody = await readRequestBody(req);
+    const payload = parseJsonSafe(requestBody) || {};
+    const inviteId = String(payload?.inviteId || '').trim();
+
+    if (!UUID_REGEX.test(inviteId)) {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.writeHead(400);
+      res.end(JSON.stringify({ error: 'inviteId inválido' }));
+      return;
+    }
+
+    const { error } = await supabaseAdmin
+      .from('admin_invite_links')
+      .update({ status: 'revoked' })
+      .eq('id', inviteId)
+      .eq('status', 'active');
+
+    if (error) {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.writeHead(500);
+      res.end(JSON.stringify({ error: 'Erro ao revogar convite', message: error.message }));
+      return;
+    }
+
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.writeHead(200);
+    res.end(JSON.stringify({ ok: true }));
+    return;
+  }
+
+  if (pathname === '/api/admin/invite-links/claim' && req.method === 'POST') {
+    const authResult = await authenticateRequestUser(req);
+    if (!authResult.user) {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.writeHead(authResult.status);
+      res.end(JSON.stringify({ error: authResult.error }));
+      return;
+    }
+
+    const requestBody = await readRequestBody(req);
+    const payload = parseJsonSafe(requestBody) || {};
+    const token = String(payload?.token || '').trim();
+
+    if (!token || token.length < 20) {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.writeHead(400);
+      res.end(JSON.stringify({ error: 'Token de convite inválido' }));
+      return;
+    }
+
+    const tokenHash = createHash('sha256').update(token).digest('hex');
+
+    const { data, error } = await supabaseAdmin.rpc('claim_admin_invite_link', {
+      p_token_hash: tokenHash,
+      p_profile_id: authResult.user.id,
+      p_profile_email: authResult.user.email || null,
+      p_ip: req.socket?.remoteAddress || null,
+    });
+
+    if (error) {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.writeHead(500);
+      res.end(JSON.stringify({ error: 'Erro ao resgatar convite', message: error.message }));
+      return;
+    }
+
+    const status = String(data?.status || '').toLowerCase();
+    const acceptedStatuses = new Set(['claimed', 'already_used', 'expired', 'revoked', 'email_mismatch', 'invalid_token']);
+
+    if (!acceptedStatuses.has(status)) {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.writeHead(500);
+      res.end(JSON.stringify({ error: 'Resposta inválida do resgate de convite', result: data }));
+      return;
+    }
+
+    const httpStatus = status === 'claimed' ? 200 : 400;
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.writeHead(httpStatus);
+    res.end(JSON.stringify({ ok: status === 'claimed', result: data }));
     return;
   }
 

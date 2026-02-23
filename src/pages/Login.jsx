@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Mail, Lock, ArrowRight, User, Loader2, GraduationCap, Phone } from 'lucide-react';
 import { Button } from '../components/ui/Button';
@@ -46,6 +46,7 @@ function isLikelyValidEmail(value) {
 
 export function Login() {
     const navigate = useNavigate();
+    const location = useLocation();
     const { signIn, signUp } = useAuth();
     const [isLogin, setIsLogin] = useState(true);
     const [loading, setLoading] = useState(false);
@@ -66,6 +67,13 @@ export function Login() {
     const signUpFn = typeof signUp === 'function'
         ? signUp
         : (data) => supabase.auth.signUp(data);
+
+    useEffect(() => {
+        const params = new URLSearchParams(location.search || '');
+        const inviteToken = String(params.get('invite') || '').trim();
+        if (!inviteToken) return;
+        localStorage.setItem('concursaflix.adminInviteToken', inviteToken);
+    }, [location.search]);
 
     const handleSubmit = async (e) => {
         e.preventDefault();

@@ -85,6 +85,7 @@ Variáveis obrigatórias do serviço backend:
 - `BABYLON_ALLOWED_ORIGINS=https://combosalvauniversitario.site,https://app.combosalvauniversitario.site`
 - `BABYLON_PROXY_REQUIRE_AUTH=true`
 - `NODE_ENV=production`
+- `PUBLIC_APP_URL=https://combosalvauniversitario.site`
 - `SUPABASE_URL=https://SEU-PROJETO.supabase.co`
 - `SUPABASE_SERVICE_ROLE_KEY=<service-role-key>`
 
@@ -117,6 +118,7 @@ No SQL Editor, execute:
 - `setup_wallet_store_checkout.sql`
 - `setup_checkout_auto_access.sql`
 - `setup_pending_checkout_benefits.sql`
+- `setup_admin_invite_links.sql`
 
 Isso habilita status pago + liberação automática de acesso para usuário normal.
 

@@ -38,6 +38,7 @@ Campos obrigatórios de segurança no `.env` do backend:
 - `BABYLON_ALLOWED_ORIGINS=https://combosalvauniversitario.site,https://app.combosalvauniversitario.site` (somente domínios, sem paths)
 - `BABYLON_PROXY_REQUIRE_AUTH=true`
 - `NODE_ENV=production`
+- `PUBLIC_APP_URL=https://combosalvauniversitario.site`
 
 Depois reinicie o backend:
 
@@ -58,6 +59,11 @@ No painel da Babylon:
 - Método: `POST`
 - Header: `x-babylon-webhook-token: <seu_token>`
 
+## Importante sobre CORS e autenticação
+- Não bloqueie `/api/babylon` no Nginx por ausência de header `Authorization`.
+- O preflight `OPTIONS` do navegador não envia bearer token e precisa passar.
+- A proteção correta já ocorre no backend (`BABYLON_PROXY_REQUIRE_AUTH=true` + validação JWT).
+
 ## 6) Configurar frontend
 No frontend publicado, configure:
 - `VITE_BABYLON_PROXY_URL=https://api.seudominio.com`
@@ -68,6 +74,7 @@ No frontend publicado, configure:
 No SQL Editor execute:
 - `setup_wallet_store_checkout.sql`
 - `setup_checkout_auto_access.sql`
+- `setup_admin_invite_links.sql`
 
 ## Testes rápidos
 ```bash

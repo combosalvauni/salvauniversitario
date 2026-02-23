@@ -1638,6 +1638,11 @@ export function Loja() {
                                 <p className="mt-1 text-xl font-bold text-white">
                                     {cartTotalPayableCents > 0 ? formatBRLFromCents(cartTotalPayableCents) : '—'}
                                 </p>
+                                {monthlyAccessPromoSummary.discountCents > 0 ? (
+                                    <p className="mt-1 text-xs text-emerald-300">
+                                        Desconto aplicado: -{formatBRLFromCents(monthlyAccessPromoSummary.discountCents)}
+                                    </p>
+                                ) : null}
                             </div>
                         </div>
 
@@ -1784,6 +1789,11 @@ export function Loja() {
                                     </span>
                                     <span className="text-xs text-gray-500">({cartTotalPayableCredits} créditos)</span>
                                 </div>
+                                {monthlyAccessPromoSummary.discountCents > 0 ? (
+                                    <p className="mt-0.5 text-xs text-emerald-300">
+                                        Desconto: -{formatBRLFromCents(monthlyAccessPromoSummary.discountCents)}
+                                    </p>
+                                ) : null}
                             </div>
                             <div className="flex w-full items-center gap-2 md:w-auto md:justify-end">
                                 <Button

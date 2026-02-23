@@ -8,6 +8,7 @@ import { Modal } from '../components/ui/Modal';
 import { cn } from '../lib/utils';
 import { supabase } from '../lib/supabase';
 import { PlansSettingsPanel } from '../components/admin/PlansSettingsPanel';
+import { InviteLinksPanel } from '../components/admin/InviteLinksPanel';
 
 const STREAMING_NAME_HINTS = [
     'netflix', 'prime', 'amazonprime', 'disney', 'hbo', 'max', 'globoplay', 'globopay', 'youtube',
@@ -311,6 +312,12 @@ export function Admin() {
             style: 'currency',
             currency: 'BRL',
         });
+    }
+
+    function formatCreditsAmount(value) {
+        const amount = Math.max(0, Math.round(Number(value || 0)));
+        const label = amount === 1 ? 'crédito' : 'créditos';
+        return `${amount.toLocaleString('pt-BR')} ${label}`;
     }
 
     function formatBRLFromCents(value) {
@@ -1296,7 +1303,31 @@ export function Admin() {
             }
         }
 
-        if (!result.error) setUsers(result.data || []);
+        if (!result.error) {
+            const profiles = result.data || [];
+            const profileIds = profiles.map((item) => item.id).filter(Boolean);
+
+            let walletBalanceByProfile = new Map();
+            if (profileIds.length > 0) {
+                const walletResult = await supabase
+                    .from('wallet_balances')
+                    .select('profile_id, balance')
+                    .in('profile_id', profileIds);
+
+                if (!walletResult.error) {
+                    walletBalanceByProfile = new Map(
+                        (walletResult.data || []).map((row) => [row.profile_id, Number(row.balance || 0)])
+                    );
+                }
+            }
+
+            setUsers(
+                profiles.map((item) => ({
+                    ...item,
+                    wallet_balance: Number(walletBalanceByProfile.get(item.id) || 0),
+                }))
+            );
+        }
         setUsersLoading(false);
     }
 
@@ -1409,7 +1440,7 @@ export function Admin() {
             .maybeSingle();
 
         if (!error && data) {
-            setUserWalletBalance(Number(data.balance || 0));
+            setUserWalletBalance(Math.max(0, Math.round(Number(data.balance || 0))));
         } else {
             setUserWalletBalance(0);
         }
@@ -1744,6 +1775,15 @@ export function Admin() {
                         Loja
                     </button>
                     <button
+                        onClick={() => setActiveTab('invites')}
+                        className={cn(
+                            "px-4 py-2 rounded-lg text-sm font-medium transition-colors",
+                            activeTab === 'invites' ? "bg-primary text-white shadow-lg" : "text-gray-400 hover:text-white"
+                        )}
+                    >
+                        Convites
+                    </button>
+                    <button
                         onClick={() => setActiveTab('support')}
                         className={cn(
                             "px-4 py-2 rounded-lg text-sm font-medium transition-colors",
@@ -1870,6 +1910,8 @@ export function Admin() {
             )}
 
             {activeTab === 'plans' && <PlansSettingsPanel />}
+
+            {activeTab === 'invites' && <InviteLinksPanel />}
 
             {activeTab === 'alerts' && (
                 <Card>
@@ -2522,6 +2564,9 @@ export function Admin() {
                                         {activeTab !== 'courses' ? (
                                             <th className="hidden sm:table-cell px-6 py-4">Telefone</th>
                                         ) : null}
+                                        {activeTab !== 'courses' ? (
+                                            <th className="hidden sm:table-cell px-6 py-4">Saldo</th>
+                                        ) : null}
                                         <th className="hidden sm:table-cell px-6 py-4">
                                             {activeTab === 'courses' ? 'Status' : 'Plano / Role'}
                                         </th>
@@ -2624,6 +2669,12 @@ export function Admin() {
                                                 </td>
                                                 <td className="hidden sm:table-cell px-6 py-4">{user.email}</td>
                                                 <td className="hidden sm:table-cell px-6 py-4">{user.whatsapp || '—'}</td>
+                                                <td className="hidden sm:table-cell px-6 py-4">
+                                                    <div className="flex flex-col">
+                                                        <span className="text-white text-xs font-semibold">{formatCreditsAmount(user.wallet_balance)}</span>
+                                                        <span className="text-[11px] text-gray-500">{formatBRLFromCredits(user.wallet_balance)}</span>
+                                                    </div>
+                                                </td>
                                                 <td className="hidden sm:table-cell px-6 py-4">
                                                     <div className="flex items-center gap-2">
                                                         <span className={cn(
@@ -3070,7 +3121,11 @@ export function Admin() {
                         <div className="rounded-xl border border-white/10 bg-white/5 p-3 space-y-3">
                             <div className="flex items-center justify-between text-sm">
                                 <span className="text-gray-400">Saldo atual</span>
-                                <span className="font-semibold text-white">{userWalletLoaded ? userWalletBalance : '...'}</span>
+                                <span className="font-semibold text-white">
+                                    {userWalletLoaded
+                                        ? `${formatCreditsAmount(userWalletBalance)} (${formatBRLFromCredits(userWalletBalance)})`
+                                        : '...'}
+                                </span>
                             </div>
 
                             <div className="flex gap-2">

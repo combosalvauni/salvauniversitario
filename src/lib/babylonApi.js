@@ -1,14 +1,30 @@
 import { supabase } from './supabase';
 
-export async function babylonRequest(path, options = {}) {
+const DEFAULT_PRODUCTION_PROXY_URL = 'https://api.combosalvauniversitario.site';
+
+function resolveProxyBaseUrl() {
+  const configuredBaseUrl = (import.meta.env.VITE_BABYLON_PROXY_URL || '').trim().replace(/\/$/, '');
+  if (configuredBaseUrl) return configuredBaseUrl;
+
+  if (typeof window !== 'undefined') {
+    const host = String(window.location?.hostname || '').toLowerCase();
+    const isLocalHost = host === 'localhost' || host === '127.0.0.1';
+    if (!isLocalHost) return DEFAULT_PRODUCTION_PROXY_URL;
+  }
+
+  return '';
+}
+
+async function proxyRequest(path, options = {}) {
   const {
     method = 'GET',
     body,
     headers = {},
+    prefix = '/api/babylon',
   } = options;
 
-  const configuredBaseUrl = (import.meta.env.VITE_BABYLON_PROXY_URL || '').trim().replace(/\/$/, '');
-  const endpointPath = `/api/babylon${path.startsWith('/') ? path : `/${path}`}`;
+  const configuredBaseUrl = resolveProxyBaseUrl();
+  const endpointPath = `${prefix}${path.startsWith('/') ? path : `/${path}`}`;
   const endpointUrl = configuredBaseUrl ? `${configuredBaseUrl}${endpointPath}` : endpointPath;
 
   const { data: { session } } = await supabase.auth.getSession();
@@ -26,27 +42,47 @@ export async function babylonRequest(path, options = {}) {
       body: body ? JSON.stringify(body) : undefined,
     });
   } catch {
-    throw new Error('Não foi possível conectar ao servidor de checkout. Inicie "npm run dev:babylon" ou configure VITE_BABYLON_PROXY_URL.');
+    throw new Error('Não foi possível conectar ao servidor da API. Inicie "npm run dev:babylon" ou configure VITE_BABYLON_PROXY_URL.');
   }
 
   const text = await response.text();
   const contentType = response.headers.get('content-type') || '';
   const isJson = contentType.includes('application/json');
-  const data = isJson && text ? JSON.parse(text) : text;
+
+  let data = text;
+  if (isJson && text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = text;
+    }
+  }
 
   if (!response.ok) {
-    const message = resolveBabylonErrorMessage(data);
+    const unauthorizedInvalidToken = response.status === 401
+      && typeof data === 'object'
+      && String(data?.error || '').toLowerCase().includes('invalid bearer token');
+
+    if (unauthorizedInvalidToken) {
+      throw new Error('Sessão inválida ou expirada. Faça login novamente.');
+    }
+
+    const message = resolveBabylonErrorMessage(data, response.status);
     throw new Error(message);
   }
 
   return data;
 }
 
-function resolveBabylonErrorMessage(data) {
+export async function babylonRequest(path, options = {}) {
+  return proxyRequest(path, { ...options, prefix: '/api/babylon' });
+}
+
+function resolveBabylonErrorMessage(data, statusCode = 0) {
   if (typeof data === 'string' && data.trim()) return data;
 
   if (!data || typeof data !== 'object') {
-    return 'Erro na API Banco Babylon';
+    return statusCode ? `Erro na API Banco Babylon (HTTP ${statusCode})` : 'Erro na API Banco Babylon';
   }
 
   const candidates = [
@@ -70,7 +106,7 @@ function resolveBabylonErrorMessage(data) {
   try {
     return JSON.stringify(data);
   } catch {
-    return 'Erro na API Banco Babylon';
+    return statusCode ? `Erro na API Banco Babylon (HTTP ${statusCode})` : 'Erro na API Banco Babylon';
   }
 }
 
@@ -84,5 +120,36 @@ export function createBabylonTransaction(payload) {
 export function claimPendingCheckoutBenefits() {
   return babylonRequest('/claim-pending-benefits', {
     method: 'POST',
+  });
+}
+
+export function listAdminInviteLinks() {
+  return proxyRequest('/invite-links', {
+    method: 'GET',
+    prefix: '/api/admin',
+  });
+}
+
+export function createAdminInviteLink(payload) {
+  return proxyRequest('/invite-links', {
+    method: 'POST',
+    body: payload,
+    prefix: '/api/admin',
+  });
+}
+
+export function revokeAdminInviteLink(inviteId) {
+  return proxyRequest('/invite-links/revoke', {
+    method: 'POST',
+    body: { inviteId },
+    prefix: '/api/admin',
+  });
+}
+
+export function claimAdminInviteLink(token) {
+  return proxyRequest('/invite-links/claim', {
+    method: 'POST',
+    body: { token },
+    prefix: '/api/admin',
   });
 }

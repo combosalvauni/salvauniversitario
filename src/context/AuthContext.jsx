@@ -1,8 +1,9 @@
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
-import { claimPendingCheckoutBenefits } from '../lib/babylonApi';
+import { claimAdminInviteLink, claimPendingCheckoutBenefits } from '../lib/babylonApi';
 
 const AuthContext = createContext({});
+const ADMIN_INVITE_STORAGE_KEY = 'concursaflix.adminInviteToken';
 
 // eslint-disable-next-line react-refresh/only-export-components
 export const useAuth = () => useContext(AuthContext);
@@ -14,6 +15,7 @@ export const AuthProvider = ({ children }) => {
     const [profileLoading, setProfileLoading] = useState(false);
     const bootstrappedProfileFor = useRef(null);
     const claimedPendingBenefitsFor = useRef(null);
+    const claimedInviteFor = useRef(null);
 
     async function fetchProfileRow(userId) {
         let result = await supabase
@@ -166,6 +168,61 @@ export const AuthProvider = ({ children }) => {
         }
 
         claimPendingBenefits();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [user?.id]);
+
+    useEffect(() => {
+        let cancelled = false;
+
+        async function claimInviteIfPresent() {
+            if (!isSupabaseConfigured) {
+                claimedInviteFor.current = null;
+                return;
+            }
+
+            if (!user?.id) {
+                claimedInviteFor.current = null;
+                return;
+            }
+
+            if (claimedInviteFor.current === user.id) {
+                return;
+            }
+
+            claimedInviteFor.current = user.id;
+
+            const inviteToken = String(localStorage.getItem(ADMIN_INVITE_STORAGE_KEY) || '').trim();
+            if (!inviteToken) {
+                return;
+            }
+
+            try {
+                const result = await claimAdminInviteLink(inviteToken);
+                if (cancelled) return;
+
+                const status = String(result?.result?.status || '').toLowerCase();
+                if (status === 'claimed') {
+                    const refreshed = await fetchProfileRow(user.id);
+                    if (!cancelled && !refreshed.error && refreshed.data) {
+                        setProfile(refreshed.data);
+                    }
+                }
+
+                localStorage.removeItem(ADMIN_INVITE_STORAGE_KEY);
+            } catch (error) {
+                const message = String(error?.message || '').toLowerCase();
+                const terminalStates = ['invalid_token', 'expired', 'revoked', 'email_mismatch', 'already_used'];
+                if (terminalStates.some((state) => message.includes(state))) {
+                    localStorage.removeItem(ADMIN_INVITE_STORAGE_KEY);
+                }
+                console.warn('Invite link was not applied now:', error?.message || error);
+            }
+        }
+
+        claimInviteIfPresent();
 
         return () => {
             cancelled = true;

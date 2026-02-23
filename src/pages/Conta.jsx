@@ -85,6 +85,12 @@ function formatBRLFromCredits(value) {
     });
 }
 
+function formatCreditsAmount(value) {
+    const amount = Math.max(0, Math.round(Number(value || 0)));
+    const label = amount === 1 ? 'crédito' : 'créditos';
+    return `${amount.toLocaleString('pt-BR')} ${label}`;
+}
+
 function resolveAvatarUrl(value) {
     if (!value) return '';
     if (value.startsWith('data:') || value.startsWith('http://') || value.startsWith('https://')) {
@@ -313,7 +319,7 @@ export function Conta() {
 
             if (cancelled) return;
 
-            setWalletBalance(Number(walletResult?.data?.balance || 0));
+            setWalletBalance(Math.max(0, Math.round(Number(walletResult?.data?.balance || 0))));
             setWalletLoaded(true);
 
             const accessByName = new Map();
@@ -689,7 +695,7 @@ export function Conta() {
                                 <div className="flex items-center justify-between rounded-xl bg-white/5 p-4 border border-white/5">
                                     <p className="font-bold text-white">Saldo</p>
                                     <span className="text-primary font-bold">
-                                        {walletLoaded ? formatBRLFromCredits(walletBalance) : '...'}
+                                        {walletLoaded ? `${formatCreditsAmount(walletBalance)} (${formatBRLFromCredits(walletBalance)})` : '...'}
                                     </span>
                                 </div>
                                 <Button
