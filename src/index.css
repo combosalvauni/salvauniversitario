@@ -1,0 +1,19 @@
+@import "tailwindcss";
+
+@theme {
+  --color-background: #0F0E0E;
+  --color-primary: #FF6600;
+  --color-primary-hover: #FF8C00;
+  --color-secondary: #F9A825;
+  --color-surface: #1C1C1C;
+  --color-text-main: #FFFFFF;
+  
+  --font-display: "Orbitron", sans-serif;
+  --font-body: "Inter", sans-serif;
+}
+
+:root {
+  font-family: var(--font-body);
+  background-color: var(--color-background);
+  color: var(--color-text-main);
+}

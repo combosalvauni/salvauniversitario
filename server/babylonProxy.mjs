@@ -1,0 +1,781 @@
+import { createServer } from 'node:http';
+import { Buffer } from 'node:buffer';
+import { createHash, randomUUID } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+import dotenv from 'dotenv';
+import { createClient } from '@supabase/supabase-js';
+
+dotenv.config({
+  path: fileURLToPath(new URL('../.env', import.meta.url)),
+});
+
+const port = Number(process.env.BABYLON_PROXY_PORT || 8787);
+const baseUrl = process.env.BABYLON_BASE_URL || 'https://api.bancobabylon.com/functions/v1';
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const nodeEnv = String(process.env.NODE_ENV || 'development').toLowerCase();
+const isProduction = nodeEnv === 'production';
+const requireApiAuth = String(process.env.BABYLON_PROXY_REQUIRE_AUTH || 'true').toLowerCase() !== 'false';
+const allowedOrigins = new Set(
+  String(
+    process.env.BABYLON_ALLOWED_ORIGINS
+    || (isProduction ? '' : 'http://localhost:5173,http://127.0.0.1:5173,http://localhost:5500,http://127.0.0.1:5500')
+  )
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean)
+);
+
+const supabaseAdmin = supabaseUrl && supabaseServiceRoleKey
+  ? createClient(supabaseUrl, supabaseServiceRoleKey)
+  : null;
+
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function getAuthHeader() {
+  const secretKey = process.env.BABYLON_SECRET_KEY;
+  const companyId = process.env.BABYLON_COMPANY_ID;
+
+  if (!secretKey || !companyId) {
+    return null;
+  }
+
+  const credentials = Buffer.from(`${secretKey}:${companyId}`).toString('base64');
+  return `Basic ${credentials}`;
+}
+
+function setCorsHeaders(res) {
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-babylon-webhook-token');
+  res.setHeader('Vary', 'Origin');
+}
+
+function setCorsOrigin(res, origin) {
+  if (!origin) return;
+  if (allowedOrigins.has(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  }
+}
+
+function isAllowedOrigin(origin) {
+  if (!origin) return true;
+  if (allowedOrigins.size === 0) return false;
+  return allowedOrigins.has(origin);
+}
+
+function getBearerToken(req) {
+  const header = String(req.headers.authorization || '');
+  if (!header.toLowerCase().startsWith('bearer ')) return null;
+  const token = header.slice(7).trim();
+  return token || null;
+}
+
+function parseJsonSafe(buffer) {
+  const text = buffer.toString('utf8');
+  if (!text.trim()) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+function normalizeDigits(value) {
+  return String(value || '').replace(/\D/g, '');
+}
+
+function isApprovedPaymentEvent(eventType) {
+  const normalized = String(eventType || '').trim().toLowerCase();
+  return ['payment.approved', 'order.paid', 'paid', 'approved', 'succeeded', 'success'].includes(normalized);
+}
+
+function resolveAmountCents(value) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount <= 0) return 0;
+  if (!Number.isInteger(amount)) return Math.round(amount * 100);
+  return Math.round(amount);
+}
+
+function sanitizeOfferLabel(value) {
+  return String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 140);
+}
+
+function collectStringValues(value, bucket = [], depth = 0) {
+  if (depth > 6 || value == null) return bucket;
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed) bucket.push(trimmed);
+    return bucket;
+  }
+
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectStringValues(item, bucket, depth + 1));
+    return bucket;
+  }
+
+  if (typeof value === 'object') {
+    Object.values(value).forEach((item) => collectStringValues(item, bucket, depth + 1));
+  }
+
+  return bucket;
+}
+
+function looksLikePixCode(value) {
+  if (typeof value !== 'string') return false;
+  const normalized = value.replace(/\s+/g, '').toUpperCase();
+  if (normalized.length < 40) return false;
+  return normalized.startsWith('000201')
+    || normalized.includes('BR.GOV.BCB.PIX')
+    || normalized.includes('PIX');
+}
+
+function looksLikeQrImage(value) {
+  if (typeof value !== 'string') return false;
+  const text = value.trim();
+  return text.startsWith('data:image/')
+    || /^https?:\/\//i.test(text) && /(qr|qrcode|pix)/i.test(text);
+}
+
+function collectCheckoutArtifacts(responseData) {
+  const candidatesPixCode = [
+    responseData?.pix?.copyAndPaste,
+    responseData?.pix?.copy_paste,
+    responseData?.pix?.copyPaste,
+    responseData?.pix?.payload,
+    responseData?.pix?.emv,
+    responseData?.pix?.code,
+    responseData?.data?.pix?.copyAndPaste,
+    responseData?.data?.pix?.copy_paste,
+    responseData?.data?.pix?.copyPaste,
+    responseData?.data?.pix?.payload,
+    responseData?.data?.pix?.emv,
+    responseData?.data?.pix?.code,
+    responseData?.pixCopiaECola,
+    responseData?.pix_code,
+    responseData?.pixCode,
+    responseData?.brCode,
+    responseData?.br_code,
+    responseData?.qrCodeText,
+    responseData?.qr_code_text,
+  ].filter(Boolean);
+
+  const candidatesQr = [
+    responseData?.pix?.qrCodeUrl,
+    responseData?.pix?.qr_code_url,
+    responseData?.pix?.qrCodeImage,
+    responseData?.pix?.qr_code_image,
+    responseData?.data?.pix?.qrCodeUrl,
+    responseData?.data?.pix?.qr_code_url,
+    responseData?.data?.pix?.qrCodeImage,
+    responseData?.data?.pix?.qr_code_image,
+  ].filter(Boolean);
+
+  const allStrings = collectStringValues(responseData);
+
+  const pixCopyPasteCode = [
+    ...candidatesPixCode,
+    ...allStrings,
+  ].find((value) => looksLikePixCode(String(value)));
+
+  const pixQrUrl = [
+    ...candidatesQr,
+    ...allStrings,
+  ].find((value) => looksLikeQrImage(String(value))) || null;
+
+  return {
+    pixCopyPasteCode: pixCopyPasteCode ? String(pixCopyPasteCode).trim() : null,
+    pixQrUrl,
+  };
+}
+
+function isTransactionCreatePath(pathname) {
+  if (!pathname) return false;
+  return pathname === '/transactions' || pathname === '/transactions/';
+}
+
+function ensureRequiredConfiguration(options = {}) {
+  const requiresSupabase = options?.requiresSupabase !== false;
+  const requiresWebhookToken = options?.requiresWebhookToken === true;
+  const issues = [];
+  const hasAuthHeader = Boolean(getAuthHeader());
+
+  if (!hasAuthHeader) {
+    issues.push('Defina BABYLON_SECRET_KEY e BABYLON_COMPANY_ID.');
+  }
+
+  if (requiresWebhookToken && !process.env.BABYLON_WEBHOOK_TOKEN) {
+    issues.push('Defina BABYLON_WEBHOOK_TOKEN para validar o webhook.');
+  }
+
+  if (requiresSupabase && !supabaseAdmin) {
+    issues.push('Defina SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY para processar webhook/benefícios e (se habilitado) validar JWT no proxy.');
+  }
+
+  if (isProduction && allowedOrigins.size === 0) {
+    issues.push('Defina BABYLON_ALLOWED_ORIGINS com os domínios autorizados do frontend.');
+  }
+
+  return issues;
+}
+
+function readRequestBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    req.on('data', (chunk) => chunks.push(chunk));
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
+  });
+}
+
+const server = createServer(async (req, res) => {
+  const origin = typeof req.headers.origin === 'string' ? req.headers.origin : '';
+  if (!isAllowedOrigin(origin)) {
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.writeHead(403);
+    res.end(JSON.stringify({ error: 'Origin not allowed' }));
+    return;
+  }
+
+  setCorsOrigin(res, origin);
+  setCorsHeaders(res);
+
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
+  if (req.url === '/health') {
+    const configured = Boolean(getAuthHeader());
+    const supabaseConfigured = Boolean(supabaseAdmin);
+    const webhookTokenConfigured = Boolean(process.env.BABYLON_WEBHOOK_TOKEN);
+    const configurationIssues = ensureRequiredConfiguration({
+      requiresSupabase: true,
+      requiresWebhookToken: isProduction,
+    });
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.writeHead(200);
+    res.end(JSON.stringify({
+      ok: true,
+      provider: 'banco-babylon',
+      configured,
+      supabaseConfigured,
+      webhookTokenConfigured,
+      requireApiAuth,
+      allowedOrigins: Array.from(allowedOrigins),
+      configurationIssues,
+    }));
+    return;
+  }
+
+  const requestUrl = new URL(req.url || '/', 'http://localhost');
+  const pathname = requestUrl.pathname;
+  const needsSupabase = pathname === '/webhooks/babylon'
+    || pathname.startsWith('/api/public/first-offer/checkout-status')
+    || pathname.startsWith('/api/babylon');
+  const needsWebhookToken = pathname === '/webhooks/babylon'
+    && (isProduction || Boolean(process.env.BABYLON_WEBHOOK_TOKEN));
+
+  const requiredConfigurationIssues = ensureRequiredConfiguration({
+    requiresSupabase: needsSupabase,
+    requiresWebhookToken: needsWebhookToken,
+  });
+  if (requiredConfigurationIssues.length) {
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.writeHead(500);
+    res.end(JSON.stringify({
+      error: 'Configuração incompleta',
+      message: requiredConfigurationIssues.join(' '),
+    }));
+    return;
+  }
+
+  if (req.url === '/webhooks/babylon' && req.method === 'POST') {
+    const expectedToken = process.env.BABYLON_WEBHOOK_TOKEN;
+    const receivedToken = req.headers['x-babylon-webhook-token'];
+    if (receivedToken !== expectedToken) {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.writeHead(401);
+      res.end(JSON.stringify({ error: 'Unauthorized webhook token' }));
+      return;
+    }
+
+    try {
+      const rawBody = await readRequestBody(req);
+      const textBody = rawBody.toString('utf8') || '{}';
+      const payload = textBody ? JSON.parse(textBody) : {};
+
+      const providerName = 'banco_babylon';
+      const providerOrderId = String(
+        payload?.provider_order_id
+        || payload?.order_id
+        || payload?.transaction_id
+        || payload?.data?.order_id
+        || payload?.data?.transaction_id
+        || ''
+      ).trim();
+
+      const checkoutOrderIdRaw = String(
+        payload?.external_id
+        || payload?.metadata?.checkout_order_id
+        || payload?.data?.external_id
+        || payload?.data?.metadata?.checkout_order_id
+        || ''
+      ).trim();
+
+      const checkoutOrderId = UUID_REGEX.test(checkoutOrderIdRaw) ? checkoutOrderIdRaw : null;
+
+      const eventType = String(
+        payload?.event_type
+        || payload?.event
+        || payload?.type
+        || payload?.status
+        || 'payment.approved'
+      ).trim();
+
+      const fallbackEventHash = createHash('sha256').update(textBody).digest('hex');
+      const eventId = String(
+        payload?.event_id
+        || payload?.id
+        || payload?.data?.event_id
+        || payload?.data?.id
+        || `${providerOrderId || checkoutOrderId || 'event'}_${fallbackEventHash}`
+      ).trim();
+
+      let checkoutSource = String(
+        payload?.metadata?.source
+        || payload?.data?.metadata?.source
+        || ''
+      ).trim().toLowerCase();
+
+      if (!checkoutSource && checkoutOrderId) {
+        const { data: orderData } = await supabaseAdmin
+          .from('checkout_orders')
+          .select('metadata')
+          .eq('id', checkoutOrderId)
+          .maybeSingle();
+        checkoutSource = String(orderData?.metadata?.source || '').trim().toLowerCase();
+      }
+
+      let data;
+      let error;
+
+      if (checkoutSource === 'wallet_topup') {
+        const result = await supabaseAdmin.rpc('apply_checkout_paid_event', {
+          p_provider_name: providerName,
+          p_provider_event_id: eventId,
+          p_provider_order_id: providerOrderId || null,
+          p_event_type: eventType,
+          p_payload: payload,
+        });
+        data = result.data;
+        error = result.error;
+      } else if (checkoutSource === 'first_offer_public_checkout') {
+        if (!isApprovedPaymentEvent(eventType)) {
+          data = { status: 'ignored_event_type', event_type: eventType };
+          error = null;
+        } else {
+          const buyerEmail = String(
+            payload?.customer?.email
+            || payload?.data?.customer?.email
+            || payload?.metadata?.customer_email
+            || payload?.data?.metadata?.customer_email
+            || ''
+          ).trim().toLowerCase();
+
+          const buyerPhone = String(
+            payload?.customer?.phone
+            || payload?.data?.customer?.phone
+            || payload?.metadata?.customer_phone
+            || payload?.data?.metadata?.customer_phone
+            || ''
+          ).trim();
+
+          const amountCents = [
+            payload?.metadata?.total_amount_cents,
+            payload?.data?.metadata?.total_amount_cents,
+            payload?.amount_cents,
+            payload?.data?.amount_cents,
+            payload?.amount,
+            payload?.data?.amount,
+          ]
+            .map((value) => resolveAmountCents(value))
+            .find((value) => value > 0) || 0;
+
+          const result = await supabaseAdmin.rpc('register_pending_checkout_benefit', {
+            p_provider_name: providerName,
+            p_provider_event_id: eventId,
+            p_provider_order_id: providerOrderId || null,
+            p_checkout_order_id: checkoutOrderId || checkoutOrderIdRaw || null,
+            p_payer_email: buyerEmail,
+            p_payer_phone: buyerPhone || null,
+            p_amount_cents: amountCents,
+            p_credit_amount: amountCents,
+            p_activate_store: true,
+            p_metadata: payload,
+          });
+
+          data = result.data;
+          error = result.error;
+        }
+      } else {
+        const result = await supabaseAdmin.rpc('apply_checkout_paid_and_grant_access', {
+          p_provider_name: providerName,
+          p_provider_event_id: eventId,
+          p_provider_order_id: providerOrderId || null,
+          p_checkout_order_id: checkoutOrderId,
+          p_event_type: eventType,
+          p_payload: payload,
+        });
+        data = result.data;
+        error = result.error;
+      }
+
+      if (error) {
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.writeHead(500);
+        res.end(JSON.stringify({
+          error: 'Erro ao aplicar webhook no Supabase',
+          message: error.message,
+        }));
+        return;
+      }
+
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.writeHead(200);
+      res.end(JSON.stringify({ ok: true, result: data }));
+    } catch (error) {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.writeHead(400);
+      res.end(JSON.stringify({
+        error: 'Webhook inválido',
+        message: error?.message || 'Não foi possível processar payload JSON',
+      }));
+    }
+    return;
+  }
+
+  if (req.url?.startsWith('/api/public/first-offer/checkout-status') && req.method === 'GET') {
+    try {
+      const requestUrl = new URL(req.url, 'http://localhost');
+      const providerOrderId = String(requestUrl.searchParams.get('providerOrderId') || '').trim();
+      const checkoutOrderId = String(requestUrl.searchParams.get('checkoutOrderId') || '').trim();
+
+      if (!providerOrderId && !checkoutOrderId) {
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.writeHead(400);
+        res.end(JSON.stringify({ error: 'Informe providerOrderId ou checkoutOrderId' }));
+        return;
+      }
+
+      let status = 'pending';
+      let matchedBy = null;
+
+      if (providerOrderId) {
+        const { data: byProviderOrder } = await supabaseAdmin
+          .from('checkout_pending_benefits')
+          .select('id, status')
+          .eq('provider_order_id', providerOrderId)
+          .limit(1)
+          .maybeSingle();
+
+        if (byProviderOrder?.id) {
+          status = 'paid';
+          matchedBy = 'provider_order_id';
+        }
+      }
+
+      if (status !== 'paid' && checkoutOrderId) {
+        const { data: byCheckoutOrder } = await supabaseAdmin
+          .from('checkout_pending_benefits')
+          .select('id, status')
+          .eq('checkout_order_id', checkoutOrderId)
+          .limit(1)
+          .maybeSingle();
+
+        if (byCheckoutOrder?.id) {
+          status = 'paid';
+          matchedBy = 'checkout_order_id';
+        }
+      }
+
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.writeHead(200);
+      res.end(JSON.stringify({
+        ok: true,
+        status,
+        matchedBy,
+      }));
+    } catch (error) {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.writeHead(500);
+      res.end(JSON.stringify({
+        error: 'Falha ao consultar status do checkout',
+        message: error?.message || 'Erro desconhecido',
+      }));
+    }
+    return;
+  }
+
+  if (req.url === '/api/public/first-offer/checkout' && req.method === 'POST') {
+    try {
+      const requestBody = await readRequestBody(req);
+      const payload = parseJsonSafe(requestBody) || {};
+
+      const email = String(payload?.customer?.email || '').trim().toLowerCase();
+      const name = String(payload?.customer?.name || '').trim() || 'Cliente';
+      const phoneDigits = normalizeDigits(payload?.customer?.phone || '');
+      const requestedOfferName = String(payload?.offerName || '').trim();
+      const normalizedOfferName = requestedOfferName
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '');
+
+      const offerCatalog = {
+        'combo mensal': { offerName: 'Combo mensal', amountCents: 3990 },
+        'combo trimestral': { offerName: 'Combo trimestral', amountCents: 14370 },
+        'combo semestral': { offerName: 'Combo semestral', amountCents: 23790 },
+      };
+
+      const selectedOffer = offerCatalog[normalizedOfferName] || null;
+
+      const orderItems = Array.isArray(payload?.items) ? payload.items : [];
+      const totalItems = orderItems.reduce((sum, item) => sum + Number(item?.quantity || 1), 0);
+
+      if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.writeHead(400);
+        res.end(JSON.stringify({ error: 'E-mail inválido' }));
+        return;
+      }
+
+      if (!selectedOffer) {
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.writeHead(400);
+        res.end(JSON.stringify({ error: 'Oferta inválida para checkout público' }));
+        return;
+      }
+
+      const offerName = selectedOffer.offerName;
+      const amountCents = selectedOffer.amountCents;
+
+      const checkoutOrderId = randomUUID();
+      const idempotencyKey = `first_offer_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+      const gatewayPayload = {
+        amount: Math.round(amountCents),
+        currency: 'BRL',
+        payment_method: 'PIX',
+        paymentMethod: 'PIX',
+        customer: {
+          name,
+          email,
+          phone: phoneDigits.length >= 10 ? phoneDigits.slice(0, 11) : '11999999999',
+          document: {
+            type: 'CPF',
+            number: '25448606695',
+          },
+        },
+        items: [{
+          title: offerName,
+          unitPrice: Math.round(amountCents),
+          quantity: 1,
+          externalRef: checkoutOrderId,
+        }],
+        external_id: checkoutOrderId,
+        externalRef: checkoutOrderId,
+        idempotency_key: idempotencyKey,
+        description: offerName,
+        metadata: {
+          checkout_order_id: checkoutOrderId,
+          source: 'first_offer_public_checkout',
+          total_items: totalItems,
+          total_amount_cents: Math.round(amountCents),
+        },
+      };
+
+      const upstreamResponse = await fetch(`${baseUrl}/transactions`, {
+        method: 'POST',
+        headers: {
+          Authorization: getAuthHeader(),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(gatewayPayload),
+      });
+
+      const upstreamText = await upstreamResponse.text();
+      let upstreamData = upstreamText;
+      try {
+        upstreamData = upstreamText ? JSON.parse(upstreamText) : {};
+      } catch {
+        upstreamData = upstreamText;
+      }
+
+      if (!upstreamResponse.ok) {
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.writeHead(upstreamResponse.status);
+        res.end(JSON.stringify({
+          error: 'Falha ao criar transação na Babylon',
+          detail: upstreamData,
+        }));
+        return;
+      }
+
+      const providerOrderId = upstreamData?.provider_order_id
+        || upstreamData?.order_id
+        || upstreamData?.transaction_id
+        || upstreamData?.id
+        || upstreamData?.data?.id
+        || null;
+
+      const artifacts = collectCheckoutArtifacts(upstreamData);
+
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.writeHead(200);
+      res.end(JSON.stringify({
+        ok: true,
+        orderId: checkoutOrderId,
+        providerOrderId,
+        gatewayStatus: String(upstreamData?.status || upstreamData?.data?.status || 'pending').toLowerCase(),
+        pixCopyPasteCode: artifacts.pixCopyPasteCode,
+        pixQrUrl: artifacts.pixQrUrl,
+        raw: upstreamData,
+      }));
+    } catch (error) {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.writeHead(500);
+      res.end(JSON.stringify({
+        error: 'Falha no checkout público',
+        message: error?.message || 'Erro desconhecido',
+      }));
+    }
+    return;
+  }
+
+  if (!req.url?.startsWith('/api/babylon')) {
+    res.writeHead(404);
+    res.end('Not Found');
+    return;
+  }
+
+  const authHeader = getAuthHeader();
+
+  try {
+    const requestUrl = new URL(req.url, 'http://localhost');
+    const upstreamPath = requestUrl.pathname.replace('/api/babylon', '');
+    const upstreamUrl = `${baseUrl}${upstreamPath}${requestUrl.search}`;
+
+    const requestBody = await readRequestBody(req);
+    const hasBody = requestBody.length > 0;
+    const isClaimPendingBenefitsPath = req.method === 'POST' && upstreamPath === '/claim-pending-benefits';
+
+    let authenticatedUser = null;
+    if (requireApiAuth || isClaimPendingBenefitsPath) {
+      const bearerToken = getBearerToken(req);
+      if (!bearerToken) {
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.writeHead(401);
+        res.end(JSON.stringify({ error: 'Unauthorized: missing bearer token' }));
+        return;
+      }
+
+      const { data: authData, error: authError } = await supabaseAdmin.auth.getUser(bearerToken);
+      if (authError || !authData?.user?.id) {
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.writeHead(401);
+        res.end(JSON.stringify({ error: 'Unauthorized: invalid bearer token' }));
+        return;
+      }
+
+      authenticatedUser = authData.user;
+    }
+
+    if (req.method === 'POST' && isTransactionCreatePath(upstreamPath)) {
+      const payload = parseJsonSafe(requestBody);
+      const checkoutOrderIdRaw = String(payload?.external_id || payload?.externalRef || payload?.metadata?.checkout_order_id || '').trim();
+      const checkoutOrderId = UUID_REGEX.test(checkoutOrderIdRaw) ? checkoutOrderIdRaw : null;
+
+      if (!checkoutOrderId) {
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.writeHead(400);
+        res.end(JSON.stringify({ error: 'external_id inválido para transação Babylon' }));
+        return;
+      }
+
+      if (authenticatedUser?.id) {
+        const { data: checkoutOrder, error: checkoutOrderError } = await supabaseAdmin
+          .from('checkout_orders')
+          .select('id')
+          .eq('id', checkoutOrderId)
+          .eq('profile_id', authenticatedUser.id)
+          .maybeSingle();
+
+        if (checkoutOrderError || !checkoutOrder?.id) {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8');
+          res.writeHead(403);
+          res.end(JSON.stringify({ error: 'Forbidden: checkout order não pertence ao usuário autenticado' }));
+          return;
+        }
+      }
+    }
+
+    if (req.method === 'POST' && upstreamPath === '/claim-pending-benefits') {
+      if (!authenticatedUser?.id) {
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.writeHead(401);
+        res.end(JSON.stringify({ error: 'Unauthorized' }));
+        return;
+      }
+
+      const { data, error } = await supabaseAdmin.rpc('apply_pending_checkout_benefits_for_profile', {
+        p_profile_id: authenticatedUser.id,
+        p_email: authenticatedUser.email || null,
+      });
+
+      if (error) {
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.writeHead(500);
+        res.end(JSON.stringify({
+          error: 'Erro ao aplicar benefícios pendentes',
+          message: error.message,
+        }));
+        return;
+      }
+
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.writeHead(200);
+      res.end(JSON.stringify({ ok: true, result: data }));
+      return;
+    }
+
+    const upstreamResponse = await fetch(upstreamUrl, {
+      method: req.method,
+      headers: {
+        Authorization: authHeader,
+        'Content-Type': 'application/json',
+      },
+      body: hasBody ? requestBody : undefined,
+    });
+
+    const upstreamText = await upstreamResponse.text();
+    const upstreamContentType = upstreamResponse.headers.get('content-type') || 'application/json; charset=utf-8';
+
+    res.setHeader('Content-Type', upstreamContentType);
+    res.writeHead(upstreamResponse.status);
+    res.end(upstreamText);
+  } catch (error) {
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.writeHead(502);
+    res.end(JSON.stringify({
+      error: 'Falha ao comunicar com Banco Babylon',
+      message: error?.message || 'Erro desconhecido',
+    }));
+  }
+});
+
+server.listen(port, () => {
+  console.log(`[babylon-proxy] running on http://localhost:${port}`);
+});
