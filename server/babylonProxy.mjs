@@ -131,6 +131,11 @@ function resolveAmountCents(value) {
   return Math.round(amount);
 }
 
+function isFailurePaymentStatus(status) {
+  const normalized = String(status || '').trim().toLowerCase();
+  return ['refused', 'failed', 'canceled', 'cancelled', 'denied', 'error', 'voided', 'expired'].includes(normalized);
+}
+
 function sanitizeOfferLabel(value) {
   return String(value || '')
     .replace(/\s+/g, ' ')
@@ -551,12 +556,129 @@ const server = createServer(async (req, res) => {
         }
       }
 
+      let fallbackApplied = false;
+      let gatewayStatus = null;
+
+      if (status !== 'paid' && providerOrderId) {
+        const upstreamResponse = await fetch(`${baseUrl}/transactions/${encodeURIComponent(providerOrderId)}`, {
+          method: 'GET',
+          headers: {
+            Authorization: getAuthHeader(),
+            'Content-Type': 'application/json',
+          },
+        });
+
+        const upstreamText = await upstreamResponse.text();
+        let upstreamData = upstreamText;
+        try {
+          upstreamData = upstreamText ? JSON.parse(upstreamText) : {};
+        } catch {
+          upstreamData = upstreamText;
+        }
+
+        if (upstreamResponse.ok) {
+          gatewayStatus = String(
+            upstreamData?.status
+            || upstreamData?.data?.status
+            || upstreamData?.transaction?.status
+            || ''
+          ).trim().toLowerCase() || null;
+
+          const approved = isApprovedPaymentEvent(gatewayStatus);
+
+          if (approved) {
+            const buyerEmail = String(
+              upstreamData?.customer?.email
+              || upstreamData?.data?.customer?.email
+              || upstreamData?.buyer?.email
+              || upstreamData?.data?.buyer?.email
+              || ''
+            ).trim().toLowerCase();
+
+            const buyerPhone = String(
+              upstreamData?.customer?.phone
+              || upstreamData?.data?.customer?.phone
+              || upstreamData?.buyer?.phone
+              || upstreamData?.data?.buyer?.phone
+              || ''
+            ).trim();
+
+            const amountCents = [
+              upstreamData?.amount_cents,
+              upstreamData?.data?.amount_cents,
+              upstreamData?.amount,
+              upstreamData?.data?.amount,
+              upstreamData?.paid_amount_cents,
+              upstreamData?.data?.paid_amount_cents,
+            ]
+              .map((value) => resolveAmountCents(value))
+              .find((value) => value > 0) || 0;
+
+            const resolvedCheckoutOrderIdRaw = String(
+              checkoutOrderId
+              || upstreamData?.external_id
+              || upstreamData?.data?.external_id
+              || upstreamData?.metadata?.checkout_order_id
+              || upstreamData?.data?.metadata?.checkout_order_id
+              || ''
+            ).trim();
+            const resolvedCheckoutOrderId = UUID_REGEX.test(resolvedCheckoutOrderIdRaw)
+              ? resolvedCheckoutOrderIdRaw
+              : null;
+
+            const fallbackEventHash = createHash('sha256')
+              .update(JSON.stringify(upstreamData || {}))
+              .digest('hex')
+              .slice(0, 24);
+            const fallbackEventId = `status_poll_${providerOrderId}_${fallbackEventHash}`;
+
+            const { data: fallbackData, error: fallbackError } = await supabaseAdmin.rpc('register_pending_checkout_benefit', {
+              p_provider_name: 'banco_babylon',
+              p_provider_event_id: fallbackEventId,
+              p_provider_order_id: providerOrderId,
+              p_checkout_order_id: resolvedCheckoutOrderId || resolvedCheckoutOrderIdRaw || null,
+              p_payer_email: buyerEmail,
+              p_payer_phone: buyerPhone || null,
+              p_amount_cents: amountCents,
+              p_credit_amount: amountCents,
+              p_activate_store: true,
+              p_metadata: {
+                source: 'checkout_status_poll_fallback',
+                gateway_status: gatewayStatus,
+                transaction: upstreamData,
+              },
+            });
+
+            if (fallbackError) {
+              res.setHeader('Content-Type', 'application/json; charset=utf-8');
+              res.writeHead(500);
+              res.end(JSON.stringify({
+                error: 'Falha ao registrar benefício via fallback de status',
+                message: fallbackError.message,
+              }));
+              return;
+            }
+
+            if (fallbackData) {
+              status = 'paid';
+              matchedBy = 'provider_status_poll';
+              fallbackApplied = true;
+            }
+          } else if (gatewayStatus && isFailurePaymentStatus(gatewayStatus)) {
+            status = 'failed';
+            matchedBy = 'provider_status_poll';
+          }
+        }
+      }
+
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
       res.writeHead(200);
       res.end(JSON.stringify({
         ok: true,
         status,
         matchedBy,
+        gatewayStatus,
+        fallbackApplied,
       }));
     } catch (error) {
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
