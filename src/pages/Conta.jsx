@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { User, CreditCard, Shield, Settings, Gift, Wallet } from 'lucide-react';
+import { User, CreditCard, Shield, Settings, Gift, Wallet, Copy, CheckCircle2, ExternalLink } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { Modal } from '../components/ui/Modal';
@@ -237,6 +237,8 @@ export function Conta() {
     const [customTopupCredits, setCustomTopupCredits] = useState('10');
     const [topupLoading, setTopupLoading] = useState(false);
     const [topupNotice, setTopupNotice] = useState('');
+    const [topupCheckoutSession, setTopupCheckoutSession] = useState(null);
+    const [topupCopiedField, setTopupCopiedField] = useState('');
     const [avatarUrl, setAvatarUrl] = useState('');
     const [avatarSaving, setAvatarSaving] = useState(false);
     const fileInputRef = useRef(null);
@@ -446,6 +448,30 @@ export function Conta() {
         return Math.max(10, Number.isFinite(parsed) ? parsed : 0);
     }
 
+    async function copyTopupPixCode(code) {
+        if (!code) return;
+        setTopupCopiedField('');
+        try {
+            await navigator.clipboard.writeText(String(code));
+            setTopupCopiedField('pix_code');
+            setTopupNotice('Código PIX copiado para a área de transferência.');
+        } catch {
+            setTopupNotice('Não foi possível copiar o código PIX automaticamente.');
+        }
+    }
+
+    async function copyTopupPaymentLink(url) {
+        if (!url) return;
+        setTopupCopiedField('');
+        try {
+            await navigator.clipboard.writeText(String(url));
+            setTopupCopiedField('payment_link');
+            setTopupNotice('Link de pagamento copiado para a área de transferência.');
+        } catch {
+            setTopupNotice('Não foi possível copiar o link de pagamento automaticamente.');
+        }
+    }
+
     async function handleTopupPixCheckoutClick() {
         if (!user?.id) return;
 
@@ -457,6 +483,7 @@ export function Conta() {
 
         const topupAmountCents = topupCredits * 100;
 
+        setTopupCopiedField('');
         setTopupLoading(true);
         try {
             const idempotencyKey = buildCheckoutIdempotencyKey(user.id);
@@ -483,6 +510,7 @@ export function Conta() {
                 .maybeSingle();
 
             if (orderError || !order?.id) {
+                setTopupCheckoutSession(null);
                 setTopupNotice('Não foi possível criar a recarga agora.');
                 return;
             }
@@ -523,6 +551,7 @@ export function Conta() {
                     })
                     .eq('id', order.id);
 
+                setTopupCheckoutSession(null);
                 setTopupNotice(`Não foi possível iniciar a recarga PIX: ${gatewayError?.message || 'erro no gateway'}`);
                 return;
             }
@@ -566,26 +595,25 @@ export function Conta() {
                 .eq('id', order.id);
 
             if (isGatewayFailure) {
+                setTopupCheckoutSession(null);
                 setTopupNotice(`Recarga recusada pela Babylon (status: ${gatewayStatus}).`);
                 return;
             }
 
+            setTopupCheckoutSession({
+                topupCredits,
+                amountCents: topupAmountCents,
+                status: gatewayStatus,
+                checkoutUrl,
+                pixCopyPasteCode,
+                pixQrUrl,
+            });
+
             if (pixCopyPasteCode) {
-                try {
-                    await navigator.clipboard.writeText(String(pixCopyPasteCode));
-                    setTopupNotice('Recarga PIX criada. Código PIX copiado para a área de transferência.');
-                } catch {
-                    setTopupNotice('Recarga PIX criada. Finalize o pagamento no checkout aberto.');
-                }
+                await copyTopupPixCode(pixCopyPasteCode);
             } else {
-                setTopupNotice('Recarga PIX criada. Finalize o pagamento no checkout aberto.');
+                setTopupNotice('Recarga PIX criada. Finalize o pagamento no checkout abaixo.');
             }
-
-            if (checkoutUrl) {
-                window.open(checkoutUrl, '_blank', 'noopener,noreferrer');
-            }
-
-            setIsTopupModalOpen(false);
         } finally {
             setTopupLoading(false);
         }
@@ -704,6 +732,8 @@ export function Conta() {
                                     className="w-full border-primary/30 text-primary hover:bg-primary/10"
                                     onClick={() => {
                                         setTopupNotice('');
+                                        setTopupCheckoutSession(null);
+                                        setTopupCopiedField('');
                                         setIsTopupModalOpen(true);
                                     }}
                                 >
@@ -812,7 +842,11 @@ export function Conta() {
 
             <Modal
                 isOpen={isTopupModalOpen}
-                onClose={() => setIsTopupModalOpen(false)}
+                onClose={() => {
+                    setIsTopupModalOpen(false);
+                    setTopupCheckoutSession(null);
+                    setTopupCopiedField('');
+                }}
                 title="Comprar Créditos (PIX)"
             >
                 <div className="space-y-4">
@@ -822,75 +856,184 @@ export function Conta() {
                         </div>
                     ) : null}
 
-                    <div className="flex flex-wrap gap-2">
-                        <button
-                            type="button"
-                            onClick={() => setCreditBuyTab('sugestoes')}
-                            className={creditBuyTab === 'sugestoes'
-                                ? 'rounded-xl border border-primary/30 bg-primary/10 px-4 py-2 text-sm font-medium text-primary'
-                                : 'rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-gray-300 hover:bg-white/10'}
-                        >
-                            Sugestões
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => setCreditBuyTab('personalizado')}
-                            className={creditBuyTab === 'personalizado'
-                                ? 'rounded-xl border border-primary/30 bg-primary/10 px-4 py-2 text-sm font-medium text-primary'
-                                : 'rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-gray-300 hover:bg-white/10'}
-                        >
-                            Personalizado
-                        </button>
-                    </div>
+                    {topupCheckoutSession ? (
+                        (() => {
+                            const fallbackQrUrl = topupCheckoutSession?.pixCopyPasteCode
+                                ? `https://api.qrserver.com/v1/create-qr-code/?size=320x320&data=${encodeURIComponent(String(topupCheckoutSession.pixCopyPasteCode))}`
+                                : null;
+                            const pixQrDisplayUrl = topupCheckoutSession?.pixQrUrl || fallbackQrUrl;
 
-                    {creditBuyTab === 'sugestoes' ? (
-                        <div className="flex flex-wrap gap-2">
-                            {[10, 20, 50, 100, 200].map((credits) => (
+                            return (
+                                <div className="space-y-4">
+                                    <div className="space-y-3 border-b border-white/10 pb-3">
+                                        <div className="flex items-center justify-between">
+                                            <h3 className="text-sm font-semibold text-white">Resumo da recarga</h3>
+                                            <span className={topupCheckoutSession.status === 'paid' ? 'rounded-full border border-green-500/40 bg-green-500/10 px-2 py-0.5 text-[11px] font-semibold text-green-300' : topupCheckoutSession.status === 'failed' ? 'rounded-full border border-red-500/40 bg-red-500/10 px-2 py-0.5 text-[11px] font-semibold text-red-300' : 'rounded-full border border-yellow-500/40 bg-yellow-500/10 px-2 py-0.5 text-[11px] font-semibold text-yellow-300'}>
+                                                {topupCheckoutSession.status || 'pending'}
+                                            </span>
+                                        </div>
+                                        <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-gray-200">
+                                            Recarga de <span className="font-semibold text-white">{Number(topupCheckoutSession?.topupCredits || 0)} créditos</span>
+                                        </div>
+                                        <div className="flex items-center justify-between border-t border-white/10 pt-2">
+                                            <span className="text-sm text-gray-300">Total</span>
+                                            <span className="text-base font-semibold text-white">{formatBRLFromCredits(topupCheckoutSession?.topupCredits || 0)}</span>
+                                        </div>
+                                    </div>
+
+                                    {topupCheckoutSession.status === 'paid' ? (
+                                        <div className="rounded-xl border border-green-500/30 bg-green-500/10 p-3 flex items-center gap-2 text-green-300 text-sm">
+                                            <CheckCircle2 className="h-4 w-4" /> Pagamento confirmado. Créditos disponíveis na sua conta.
+                                        </div>
+                                    ) : null}
+
+                                    {pixQrDisplayUrl ? (
+                                        <div className="rounded-xl border border-white/10 bg-black/20 p-4 space-y-2">
+                                            <p className="text-xs text-gray-400">1) Escaneie o QR Code no app do banco</p>
+                                            <div className="rounded-xl border border-white/10 bg-white/95 p-3 flex justify-center">
+                                                <img src={pixQrDisplayUrl} alt="QR Code PIX" className="w-52 h-52 rounded-lg" />
+                                            </div>
+                                        </div>
+                                    ) : null}
+
+                                    {topupCheckoutSession.checkoutUrl ? (
+                                        <div className="space-y-2 rounded-xl border border-white/10 bg-black/20 p-3">
+                                            <p className="text-xs text-gray-400">2) Ou pague pelo link de checkout</p>
+                                            <div className="rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-xs text-gray-200 break-all">
+                                                {topupCheckoutSession.checkoutUrl}
+                                            </div>
+                                            <div className="grid gap-2 sm:grid-cols-2">
+                                                <Button
+                                                    type="button"
+                                                    variant="outline"
+                                                    onClick={() => copyTopupPaymentLink(topupCheckoutSession.checkoutUrl)}
+                                                >
+                                                    <Copy className="h-4 w-4 mr-2" /> Copiar link
+                                                </Button>
+                                                <Button
+                                                    type="button"
+                                                    onClick={() => window.open(topupCheckoutSession.checkoutUrl, '_blank', 'noopener,noreferrer')}
+                                                >
+                                                    <ExternalLink className="h-4 w-4 mr-2" /> Abrir checkout
+                                                </Button>
+                                            </div>
+                                            {topupCopiedField === 'payment_link' ? (
+                                                <p className="text-[11px] text-green-400">Link copiado com sucesso.</p>
+                                            ) : null}
+                                        </div>
+                                    ) : null}
+
+                                    {topupCheckoutSession.pixCopyPasteCode ? (
+                                        <div className="space-y-2 rounded-xl border border-white/10 bg-black/20 p-3">
+                                            <p className="text-xs text-gray-400">3) PIX Copia e Cola</p>
+                                            <textarea
+                                                readOnly
+                                                value={topupCheckoutSession.pixCopyPasteCode}
+                                                onClick={() => copyTopupPixCode(topupCheckoutSession.pixCopyPasteCode)}
+                                                className="w-full min-h-24 rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-xs text-gray-200 cursor-copy"
+                                            />
+                                            <Button
+                                                type="button"
+                                                variant="ghost"
+                                                className="w-full"
+                                                onClick={() => copyTopupPixCode(topupCheckoutSession.pixCopyPasteCode)}
+                                            >
+                                                <Copy className="h-4 w-4 mr-2" /> Copiar código PIX
+                                            </Button>
+                                            {topupCopiedField === 'pix_code' ? (
+                                                <p className="text-[11px] text-green-400">Código PIX copiado com sucesso.</p>
+                                            ) : null}
+                                        </div>
+                                    ) : null}
+
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        className="w-full"
+                                        onClick={() => {
+                                            setTopupCheckoutSession(null);
+                                            setTopupCopiedField('');
+                                            setTopupNotice('');
+                                        }}
+                                    >
+                                        Gerar nova recarga
+                                    </Button>
+                                </div>
+                            );
+                        })()
+                    ) : (
+                        <>
+                            <div className="flex flex-wrap gap-2">
                                 <button
-                                    key={credits}
                                     type="button"
-                                    onClick={() => setSelectedTopupCredits(credits)}
-                                    className={selectedTopupCredits === credits
+                                    onClick={() => setCreditBuyTab('sugestoes')}
+                                    className={creditBuyTab === 'sugestoes'
                                         ? 'rounded-xl border border-primary/30 bg-primary/10 px-4 py-2 text-sm font-medium text-primary'
                                         : 'rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-gray-300 hover:bg-white/10'}
                                 >
-                                    {credits} créditos ({formatBRLFromCredits(credits)})
+                                    Sugestões
                                 </button>
-                            ))}
-                        </div>
-                    ) : (
-                        <div className="space-y-2">
-                            <Input
-                                type="number"
-                                min="10"
-                                step="1"
-                                value={customTopupCredits}
-                                onChange={(e) => setCustomTopupCredits(e.target.value)}
-                                placeholder="Mínimo 10 créditos"
-                            />
-                            <p className="text-xs text-gray-400">
-                                Mínimo de 10 créditos por recarga.
-                            </p>
-                        </div>
+                                <button
+                                    type="button"
+                                    onClick={() => setCreditBuyTab('personalizado')}
+                                    className={creditBuyTab === 'personalizado'
+                                        ? 'rounded-xl border border-primary/30 bg-primary/10 px-4 py-2 text-sm font-medium text-primary'
+                                        : 'rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-gray-300 hover:bg-white/10'}
+                                >
+                                    Personalizado
+                                </button>
+                            </div>
+
+                            {creditBuyTab === 'sugestoes' ? (
+                                <div className="flex flex-wrap gap-2">
+                                    {[10, 20, 50, 100, 200].map((credits) => (
+                                        <button
+                                            key={credits}
+                                            type="button"
+                                            onClick={() => setSelectedTopupCredits(credits)}
+                                            className={selectedTopupCredits === credits
+                                                ? 'rounded-xl border border-primary/30 bg-primary/10 px-4 py-2 text-sm font-medium text-primary'
+                                                : 'rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-gray-300 hover:bg-white/10'}
+                                        >
+                                            {credits} créditos ({formatBRLFromCredits(credits)})
+                                        </button>
+                                    ))}
+                                </div>
+                            ) : (
+                                <div className="space-y-2">
+                                    <Input
+                                        type="number"
+                                        min="10"
+                                        step="1"
+                                        value={customTopupCredits}
+                                        onChange={(e) => setCustomTopupCredits(e.target.value)}
+                                        placeholder="Mínimo 10 créditos"
+                                    />
+                                    <p className="text-xs text-gray-400">
+                                        Mínimo de 10 créditos por recarga.
+                                    </p>
+                                </div>
+                            )}
+
+                            <div className="rounded-xl border border-white/10 bg-black/20 p-3 text-sm text-gray-300">
+                                <p>
+                                    Valor da recarga:{' '}
+                                    <span className="font-semibold text-white">
+                                        {resolveTopupCreditsAmount()} créditos ({formatBRLFromCredits(resolveTopupCreditsAmount())})
+                                    </span>
+                                </p>
+                            </div>
+
+                            <Button
+                                type="button"
+                                className="w-full"
+                                onClick={handleTopupPixCheckoutClick}
+                                isLoading={topupLoading}
+                            >
+                                Comprar créditos com PIX
+                            </Button>
+                        </>
                     )}
-
-                    <div className="rounded-xl border border-white/10 bg-black/20 p-3 text-sm text-gray-300">
-                        <p>
-                            Valor da recarga:{' '}
-                            <span className="font-semibold text-white">
-                                {resolveTopupCreditsAmount()} créditos ({formatBRLFromCredits(resolveTopupCreditsAmount())})
-                            </span>
-                        </p>
-                    </div>
-
-                    <Button
-                        type="button"
-                        className="w-full"
-                        onClick={handleTopupPixCheckoutClick}
-                        isLoading={topupLoading}
-                    >
-                        Comprar créditos com PIX
-                    </Button>
                 </div>
             </Modal>
         </div>

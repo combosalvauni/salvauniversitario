@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Layers, Users, Plus, Edit, Trash2, Search, CheckCircle, XCircle, Loader2, KeyRound, ChevronUp, ChevronDown, GripVertical, MessageSquare, ShoppingCart, AlertTriangle } from 'lucide-react';
+import { Layers, Users, Plus, Edit, Trash2, Search, CheckCircle, XCircle, Loader2, KeyRound, ChevronUp, ChevronDown, GripVertical, MessageSquare, ShoppingCart, AlertTriangle, Link2 } from 'lucide-react';
 import { Reorder, useDragControls } from 'framer-motion';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
@@ -40,6 +40,7 @@ function ReorderablePlatformRow({
     disableMoveUp,
     disableMoveDown,
     onManageAccounts,
+    onQuickLink,
     onEdit,
     onDelete,
 }) {
@@ -75,7 +76,7 @@ function ReorderablePlatformRow({
             <td className="px-3 py-3 sm:px-6 sm:py-4 font-medium text-white">
                 <div className="flex items-center gap-3 min-w-0">
                     {course.image_url && (
-                        <img src={course.image_url} className="hidden sm:block w-8 h-8 rounded object-cover" />
+                        <img src={course.image_url} alt={course.name} loading="lazy" decoding="async" className="hidden sm:block w-8 h-8 rounded object-cover" />
                     )}
                     <span className="truncate">{course.name}</span>
                 </div>
@@ -125,6 +126,13 @@ function ReorderablePlatformRow({
                         title="Contas"
                     >
                         <KeyRound className="h-4 w-4" />
+                    </button>
+                    <button
+                        onClick={onQuickLink}
+                        className="p-2 text-cyan-400 hover:bg-cyan-500/10 rounded-lg transition-colors"
+                        title="Trocar link"
+                    >
+                        <Link2 className="h-4 w-4" />
                     </button>
                     <button
                         onClick={onEdit}
@@ -213,6 +221,8 @@ export function Admin() {
         show_account_badge: false,
         account_badge_count: '',
     });
+    const [isPlatformLinkModalOpen, setIsPlatformLinkModalOpen] = useState(false);
+    const [platformLinkEditing, setPlatformLinkEditing] = useState({ id: '', name: '', extension_link: '' });
 
     const [isAccountsModalOpen, setIsAccountsModalOpen] = useState(false);
     const [accountsPlatform, setAccountsPlatform] = useState(null);
@@ -1361,6 +1371,40 @@ export function Admin() {
         setIsPlatformModalOpen(true);
     }
 
+    function openPlatformQuickLink(platform) {
+        if (!platform?.id) return;
+        setPlatformLinkEditing({
+            id: platform.id,
+            name: platform.name ?? '',
+            extension_link: platform.extension_link ?? '',
+        });
+        setIsPlatformLinkModalOpen(true);
+    }
+
+    async function savePlatformQuickLink() {
+        if (!platformLinkEditing.id) return;
+
+        const { error } = await supabase
+            .from('platforms')
+            .update({ extension_link: platformLinkEditing.extension_link || '' })
+            .eq('id', platformLinkEditing.id);
+
+        if (error) {
+            alert('Erro ao salvar link da plataforma: ' + error.message);
+            return;
+        }
+
+        setIsPlatformLinkModalOpen(false);
+        setPlatformLinkEditing({ id: '', name: '', extension_link: '' });
+        alert('Link da plataforma atualizado com sucesso.');
+
+        if (activeTab === 'store') {
+            await Promise.all([fetchCourses(), fetchStoreProducts()]);
+        } else {
+            await fetchCourses();
+        }
+    }
+
     async function savePlatform() {
         if (!platformForm.name) return;
 
@@ -2128,7 +2172,7 @@ export function Admin() {
                                                     <td className="px-4 py-3">
                                                         <div className="flex items-center gap-3 min-w-0">
                                                             {platform.image_url ? (
-                                                                <img src={platform.image_url} className="hidden sm:block w-8 h-8 rounded object-cover" />
+                                                                <img src={platform.image_url} alt={platform.name} loading="lazy" decoding="async" className="hidden sm:block w-8 h-8 rounded object-cover" />
                                                             ) : null}
                                                             <div className="min-w-0">
                                                                 <div className="font-medium text-white truncate">{platform.name}</div>
@@ -2295,7 +2339,7 @@ export function Admin() {
                                                     <td className="px-4 py-3">
                                                         <div className="flex items-center gap-3 min-w-0">
                                                             {platform.image_url ? (
-                                                                <img src={platform.image_url} className="hidden sm:block w-8 h-8 rounded object-cover" />
+                                                                <img src={platform.image_url} alt={platform.name} loading="lazy" decoding="async" className="hidden sm:block w-8 h-8 rounded object-cover" />
                                                             ) : null}
                                                             <div className="min-w-0">
                                                                 <div className="font-medium text-white truncate">{platform.name}</div>
@@ -2435,7 +2479,7 @@ export function Admin() {
                                                 <td className="px-4 py-3">
                                                     <div className="flex items-center gap-3 min-w-0">
                                                         {platform.image_url ? (
-                                                            <img src={platform.image_url} className="hidden sm:block w-8 h-8 rounded object-cover" />
+                                                            <img src={platform.image_url} alt={platform.name} loading="lazy" decoding="async" className="hidden sm:block w-8 h-8 rounded object-cover" />
                                                         ) : null}
                                                         <div className="min-w-0">
                                                             <div className="font-medium text-white truncate">{platform.name}</div>
@@ -2583,7 +2627,7 @@ export function Admin() {
                                                     <td className="px-3 py-3 sm:px-6 sm:py-4 font-medium text-white">
                                                         <div className="flex items-center gap-3 min-w-0">
                                                             {course.image_url && (
-                                                                <img src={course.image_url} className="hidden sm:block w-8 h-8 rounded object-cover" />
+                                                                <img src={course.image_url} alt={course.name} loading="lazy" decoding="async" className="hidden sm:block w-8 h-8 rounded object-cover" />
                                                             )}
                                                             <span className="truncate">{course.name}</span>
                                                         </div>
@@ -2607,6 +2651,13 @@ export function Admin() {
                                                                 title="Contas"
                                                             >
                                                                 <KeyRound className="h-4 w-4" />
+                                                            </button>
+                                                            <button
+                                                                onClick={() => openPlatformQuickLink(course)}
+                                                                className="p-2 text-cyan-400 hover:bg-cyan-500/10 rounded-lg transition-colors"
+                                                                title="Trocar link"
+                                                            >
+                                                                <Link2 className="h-4 w-4" />
                                                             </button>
                                                             <button
                                                                 onClick={() => openEditPlatform(course)}
@@ -2651,6 +2702,7 @@ export function Admin() {
                                                     disableMoveUp={idx === 0}
                                                     disableMoveDown={idx === courses.length - 1}
                                                     onManageAccounts={() => openManageAccounts(course)}
+                                                    onQuickLink={() => openPlatformQuickLink(course)}
                                                     onEdit={() => openEditPlatform(course)}
                                                     onDelete={() => deletePlatform(course.id)}
                                                 />
@@ -2845,6 +2897,45 @@ export function Admin() {
                             Cancelar
                         </Button>
                         <Button onClick={savePlatform}>{platformEditingId ? 'Salvar Alterações' : 'Salvar Plataforma'}</Button>
+                    </div>
+                </div>
+            </Modal>
+
+            <Modal
+                isOpen={isPlatformLinkModalOpen}
+                onClose={() => {
+                    setIsPlatformLinkModalOpen(false);
+                    setPlatformLinkEditing({ id: '', name: '', extension_link: '' });
+                }}
+                title="Trocar Link da Plataforma"
+            >
+                <div className="space-y-4">
+                    <div className="space-y-1">
+                        <div className="text-xs uppercase tracking-wider text-gray-500">Plataforma</div>
+                        <div className="text-sm font-medium text-white">{platformLinkEditing.name || '—'}</div>
+                    </div>
+
+                    <div className="space-y-2">
+                        <label className="text-sm font-medium text-gray-400">Link que o usuário vai abrir</label>
+                        <Input
+                            value={platformLinkEditing.extension_link}
+                            onChange={(e) => setPlatformLinkEditing((prev) => ({ ...prev, extension_link: e.target.value }))}
+                            placeholder="https://..."
+                        />
+                    </div>
+
+                    <div className="pt-2 flex justify-end gap-3">
+                        <Button
+                            type="button"
+                            variant="ghost"
+                            onClick={() => {
+                                setIsPlatformLinkModalOpen(false);
+                                setPlatformLinkEditing({ id: '', name: '', extension_link: '' });
+                            }}
+                        >
+                            Cancelar
+                        </Button>
+                        <Button type="button" onClick={savePlatformQuickLink}>Salvar link</Button>
                     </div>
                 </div>
             </Modal>

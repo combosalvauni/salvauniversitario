@@ -23,8 +23,8 @@ export function Layout() {
         <div className="flex min-h-[100dvh] w-full bg-background font-body text-text-main selection:bg-primary selection:text-white">
             {/* Background Effects */}
             <div className="fixed inset-0 z-0 pointer-events-none">
-                <div className="absolute top-[-10%] left-[-10%] h-[500px] w-[500px] rounded-full bg-primary/20 blur-[128px] animate-pulse"></div>
-                <div className="absolute bottom-[-10%] right-[-10%] h-[500px] w-[500px] rounded-full bg-secondary/10 blur-[128px] animate-pulse delay-1000"></div>
+                <div className="absolute top-[-10%] left-[-10%] h-[320px] w-[320px] sm:h-[500px] sm:w-[500px] rounded-full bg-primary/20 blur-[72px] sm:blur-[128px] motion-safe:md:animate-pulse"></div>
+                <div className="absolute bottom-[-10%] right-[-10%] h-[320px] w-[320px] sm:h-[500px] sm:w-[500px] rounded-full bg-secondary/10 blur-[72px] sm:blur-[128px] motion-safe:md:animate-pulse md:delay-1000"></div>
             </div>
 
             <Sidebar

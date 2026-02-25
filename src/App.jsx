@@ -25,6 +25,7 @@ function App() {
     <AuthProvider>
       <Router>
         <div className="min-h-screen bg-background text-text-main font-body selection:bg-primary selection:text-white">
+          <MetaPixelRouteTracker />
           <RoutePrefetch />
           <Suspense fallback={<RouteLoading />}> 
             <Routes>
@@ -56,6 +57,24 @@ function App() {
   );
 }
 
+function MetaPixelRouteTracker() {
+  const location = useLocation();
+  const firstRenderRef = useRef(true);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.fbq !== 'function') return;
+
+    if (firstRenderRef.current) {
+      firstRenderRef.current = false;
+      return;
+    }
+
+    window.fbq('track', 'PageView');
+  }, [location.pathname, location.search]);
+
+  return null;
+}
+
 function RoutePrefetch() {
   const { user, isAdmin, canAccessStore } = useAuth();
   const location = useLocation();
@@ -65,6 +84,11 @@ function RoutePrefetch() {
     if (!user) return;
 
     const connection = typeof navigator !== 'undefined' ? navigator.connection : null;
+    const effectiveType = String(connection?.effectiveType || '').toLowerCase();
+    const isConstrainedNetwork = ['slow-2g', '2g', '3g'].includes(effectiveType);
+    const lowMemoryDevice = typeof navigator !== 'undefined'
+      && typeof navigator.deviceMemory === 'number'
+      && navigator.deviceMemory <= 4;
     if (connection?.saveData) return;
 
     const importers = {
@@ -90,7 +114,10 @@ function RoutePrefetch() {
     };
 
     const baseQueue = priorityByPath[location.pathname] || ['plataformas', 'dashboard', 'conta', 'chat', 'loja', 'admin'];
-    const queue = baseQueue.filter((key) => available.has(key) && !prefetchedRef.current.has(key));
+    const maxPrefetchCount = isConstrainedNetwork || lowMemoryDevice ? 2 : 6;
+    const queue = baseQueue
+      .filter((key) => available.has(key) && !prefetchedRef.current.has(key))
+      .slice(0, maxPrefetchCount);
     if (!queue.length) return;
 
     let cancelled = false;
@@ -121,7 +148,7 @@ function RoutePrefetch() {
     };
 
     if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
-      idleHandle = window.requestIdleCallback(runBatch, { timeout: 800 });
+      idleHandle = window.requestIdleCallback(runBatch, { timeout: isConstrainedNetwork ? 1400 : 800 });
       return () => {
         cancelled = true;
         if (idleHandle != null) window.cancelIdleCallback(idleHandle);

@@ -180,6 +180,7 @@ export function Plataformas() {
             id: platform.id,
             name: platform.name,
             platform_extension_link: platform.extension_link,
+            open_link: (accounts || []).find((acc) => acc.extension_link)?.extension_link || platform.extension_link || '',
             accounts: accounts || [],
         });
     }
@@ -232,7 +233,7 @@ export function Plataformas() {
                         <div className="p-4 pb-0">
                             <div className="w-full aspect-square rounded-xl bg-white/10 flex items-center justify-center overflow-hidden">
                                 {platform.image_url ? (
-                                    <img src={platform.image_url} alt={platform.name} className="h-full w-full object-cover" />
+                                    <img src={platform.image_url} alt={platform.name} loading="lazy" decoding="async" className="h-full w-full object-cover" />
                                 ) : (
                                     <span className="font-display font-bold text-4xl sm:text-5xl text-gray-500">{platform.name.charAt(0)}</span>
                                 )}
@@ -340,22 +341,23 @@ export function Plataformas() {
                                             </div>
                                         </div>
 
-                                        {(acc.extension_link || selectedPlatform.platform_extension_link) && (
-                                            <div className="pt-4 border-t border-white/10">
-                                                <Button
-                                                    className="w-full"
-                                                    variant="outline"
-                                                    onClick={() => window.open(acc.extension_link || selectedPlatform.platform_extension_link, '_blank')}
-                                                >
-                                                    <Download className="mr-2 h-4 w-4" /> Baixar Extensão de Acesso
-                                                </Button>
-                                                <p className="mt-2 text-center text-xs text-gray-500">
-                                                    Necessário para acessar a plataforma sem bloqueios.
-                                                </p>
-                                            </div>
-                                        )}
                                     </div>
                                 ))}
+
+                                {!!selectedPlatform.open_link && (
+                                    <div className="pt-4 border-t border-white/10">
+                                        <Button
+                                            className="w-full"
+                                            variant="primary"
+                                            onClick={() => window.open(selectedPlatform.open_link, '_blank')}
+                                        >
+                                            <Download className="mr-2 h-4 w-4" /> Acessar plataforma
+                                        </Button>
+                                        <p className="mt-2 text-center text-xs text-gray-500">
+                                            Esse link é configurado pelo admin em Plataformas.
+                                        </p>
+                                    </div>
+                                )}
                             </div>
                         )}
                     </div>

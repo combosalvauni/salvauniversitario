@@ -342,7 +342,7 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  if (req.url === '/webhooks/babylon' && req.method === 'POST') {
+  if (pathname === '/webhooks/babylon' && req.method === 'POST') {
     const expectedToken = process.env.BABYLON_WEBHOOK_TOKEN;
     const receivedToken = req.headers['x-babylon-webhook-token'];
     if (receivedToken !== expectedToken) {

@@ -1565,7 +1565,7 @@ export function Loja() {
                                     <article key={product.id} className="group rounded-2xl border border-white/10 bg-black/20 p-3 transition-all hover:border-primary/30 hover:bg-white/5 h-full flex flex-col">
                                         <div className="relative w-full aspect-square rounded-xl overflow-hidden bg-white/10 flex items-center justify-center">
                                             {product.image_url ? (
-                                                <img src={product.image_url} alt={product.name} className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105" />
+                                                <img src={product.image_url} alt={product.name} loading="lazy" decoding="async" className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105" />
                                             ) : (
                                                 <div className="flex flex-col items-center gap-1 text-gray-500">
                                                     <ImageIcon className="h-6 w-6" />

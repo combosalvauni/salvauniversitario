@@ -19,14 +19,14 @@ export function Modal({ isOpen, onClose, title, children, className, contentClas
     if (!isOpen) return null;
 
     return createPortal(
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-[1px] sm:backdrop-blur-sm animate-in fade-in duration-200">
             <div
                 className={cn(
-                    "relative w-full max-w-lg rounded-2xl border border-white/10 bg-[#1C1C1C] shadow-[0_0_50px_rgba(0,0,0,0.5)] animate-in zoom-in-95 duration-200 max-h-[calc(100dvh-2rem)] overflow-hidden",
+                    "relative w-full max-w-lg rounded-2xl border border-white/10 bg-[#1C1C1C] shadow-[0_0_24px_rgba(0,0,0,0.45)] sm:shadow-[0_0_50px_rgba(0,0,0,0.5)] animate-in zoom-in-95 duration-200 max-h-[calc(100dvh-2rem)] overflow-hidden",
                     className
                 )}
             >
-                <div className="flex items-center justify-between border-b border-white/5 p-6">
+                <div className="flex items-center justify-between border-b border-white/5 p-4 sm:p-6">
                     <h2 className="font-display text-xl font-bold text-white">{title}</h2>
                     <button
                         onClick={onClose}
@@ -35,7 +35,7 @@ export function Modal({ isOpen, onClose, title, children, className, contentClas
                         <X className="h-5 w-5" />
                     </button>
                 </div>
-                <div className={cn("p-6 overflow-y-auto max-h-[calc(100dvh-8rem)]", contentClassName)}>
+                <div className={cn("p-4 sm:p-6 overflow-y-auto max-h-[calc(100dvh-7rem)] sm:max-h-[calc(100dvh-8rem)]", contentClassName)}>
                     {children}
                 </div>
             </div>
