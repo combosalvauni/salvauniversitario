@@ -199,7 +199,7 @@ function ProtectedRoute({ children }) {
 function AdminRoute({ children }) {
   const { user, isAdmin, profileLoading } = useAuth();
   if (!user) return <Navigate to="/login" replace />;
-  if (profileLoading) return null;
+  if (profileLoading) return <RouteLoading />;
   if (!isAdmin) return <Navigate to="/plataformas" replace />;
   return children;
 }
@@ -207,7 +207,7 @@ function AdminRoute({ children }) {
 function StoreRoute({ children }) {
   const { user, canAccessStore, profileLoading } = useAuth();
   if (!user) return <Navigate to="/login" replace />;
-  if (profileLoading) return null;
+  if (profileLoading) return <RouteLoading />;
   if (!canAccessStore) return <Navigate to="/plataformas" replace />;
   return children;
 }

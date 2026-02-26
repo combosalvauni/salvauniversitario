@@ -158,7 +158,7 @@ begin
   end if;
 
   if v_credit = 0 and v_amount > 0 then
-    v_credit := v_amount;
+    v_credit := floor(v_amount::numeric / 100)::integer;
   end if;
 
   select p.id

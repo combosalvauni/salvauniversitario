@@ -131,6 +131,12 @@ function resolveAmountCents(value) {
   return Math.round(amount);
 }
 
+function resolveCreditAmountFromCents(value) {
+  const amountCents = Number(value);
+  if (!Number.isFinite(amountCents) || amountCents <= 0) return 0;
+  return Math.floor(amountCents / 100);
+}
+
 function isFailurePaymentStatus(status) {
   const normalized = String(status || '').trim().toLowerCase();
   return ['refused', 'failed', 'canceled', 'cancelled', 'denied', 'error', 'voided', 'expired'].includes(normalized);
@@ -458,6 +464,7 @@ const server = createServer(async (req, res) => {
           ]
             .map((value) => resolveAmountCents(value))
             .find((value) => value > 0) || 0;
+          const creditAmount = resolveCreditAmountFromCents(amountCents);
 
           const result = await supabaseAdmin.rpc('register_pending_checkout_benefit', {
             p_provider_name: providerName,
@@ -467,7 +474,7 @@ const server = createServer(async (req, res) => {
             p_payer_email: buyerEmail,
             p_payer_phone: buyerPhone || null,
             p_amount_cents: amountCents,
-            p_credit_amount: amountCents,
+            p_credit_amount: creditAmount,
             p_activate_store: true,
             p_metadata: payload,
           });
@@ -613,6 +620,7 @@ const server = createServer(async (req, res) => {
             ]
               .map((value) => resolveAmountCents(value))
               .find((value) => value > 0) || 0;
+            const creditAmount = resolveCreditAmountFromCents(amountCents);
 
             const resolvedCheckoutOrderIdRaw = String(
               checkoutOrderId
@@ -640,7 +648,7 @@ const server = createServer(async (req, res) => {
               p_payer_email: buyerEmail,
               p_payer_phone: buyerPhone || null,
               p_amount_cents: amountCents,
-              p_credit_amount: amountCents,
+              p_credit_amount: creditAmount,
               p_activate_store: true,
               p_metadata: {
                 source: 'checkout_status_poll_fallback',

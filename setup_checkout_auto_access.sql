@@ -24,8 +24,11 @@ declare
   v_quantity integer;
   v_selected_cycle text;
   v_months integer;
+  v_extension interval;
   v_valid_until timestamp with time zone;
   v_account_id uuid;
+  v_existing_assignment_id uuid;
+  v_existing_assignment_valid_until timestamp with time zone;
   v_now timestamp with time zone := timezone('utc'::text, now());
   v_assigned_count integer := 0;
   v_i integer;
@@ -148,6 +151,41 @@ begin
       when v_selected_cycle = 'anual' then 12
       else 1
     end;
+
+    v_extension := make_interval(months => greatest(v_months * v_quantity, 1));
+
+    select ass.id, ass.valid_until
+      into v_existing_assignment_id, v_existing_assignment_valid_until
+    from public.platform_account_assignments ass
+    join public.platform_accounts pa on pa.id = ass.account_id
+    where ass.profile_id = v_order.profile_id
+      and pa.platform_id = v_platform_id
+      and pa.status = 'active'
+      and ass.revoked_at is null
+      and ass.show_to_user = true
+    order by
+      case when ass.valid_until is null then 1 else 0 end desc,
+      ass.valid_until desc,
+      ass.created_at desc
+    limit 1
+    for update skip locked;
+
+    if v_existing_assignment_id is not null then
+      update public.platform_account_assignments
+        set valid_until = case
+          when v_existing_assignment_valid_until is null then null
+          when v_existing_assignment_valid_until > v_now then v_existing_assignment_valid_until + v_extension
+          else v_now + v_extension
+        end,
+        note = case
+          when coalesce(trim(note), '') = '' then format('Renovado via checkout %s', v_order.id)
+          else note || format(' | Renovado via checkout %s', v_order.id)
+        end
+      where id = v_existing_assignment_id;
+
+      v_assigned_count := v_assigned_count + 1;
+      continue;
+    end if;
 
     v_valid_until := v_now + make_interval(months => v_months);
 
