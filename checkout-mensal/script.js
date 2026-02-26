@@ -877,10 +877,11 @@ async function createFirstOfferCheckout() {
         email: customerEmail,
         phone: customerPhone,
       },
-      items: [{
-        quantity: 1,
-        unitPriceCents: amountCents,
-      }],
+      items: orderItems.map((item) => ({
+        title: item.title,
+        unitPriceCents: item.unitPriceCents,
+        quantity: item.quantity,
+      })),
     }),
   });
 

@@ -783,10 +783,25 @@ const server = createServer(async (req, res) => {
         'combo semestral': { offerName: 'Combo semestral', amountCents: 15990 },
       };
 
+      // Catálogo de upsells aceitos (preço em centavos)
+      const upsellCatalog = {
+        'streaming - 30 dias': 1790,
+        'acesso extra (+1 login simultaneo)': 1990,
+        'grupo vip de networking - vitalicio': 990,
+        'afiliacao': 3990,
+      };
+
+      function normalizeItemTitle(title) {
+        return String(title || '')
+          .trim()
+          .toLowerCase()
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '');
+      }
+
       const selectedOffer = offerCatalog[normalizedOfferName] || null;
 
       const orderItems = Array.isArray(payload?.items) ? payload.items : [];
-      const totalItems = orderItems.reduce((sum, item) => sum + Number(item?.quantity || 1), 0);
 
       if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -803,7 +818,29 @@ const server = createServer(async (req, res) => {
       }
 
       const offerName = selectedOffer.offerName;
-      const amountCents = selectedOffer.amountCents;
+      let amountCents = selectedOffer.amountCents;
+
+      // Processar upsells do request
+      const validatedItems = [{ title: offerName, unitPriceCents: amountCents, quantity: 1 }];
+
+      for (const item of orderItems) {
+        const itemTitle = normalizeItemTitle(item?.title);
+        // Pular o item base (já incluído acima)
+        if (itemTitle === normalizedOfferName) continue;
+        // Verificar se é um upsell conhecido
+        const catalogPrice = upsellCatalog[itemTitle];
+        if (catalogPrice != null) {
+          const qty = Math.max(1, Math.min(Number(item?.quantity || 1), 5));
+          amountCents += catalogPrice * qty;
+          validatedItems.push({
+            title: String(item?.title || '').trim(),
+            unitPriceCents: catalogPrice,
+            quantity: qty,
+          });
+        }
+      }
+
+      const totalItems = validatedItems.reduce((sum, item) => sum + Number(item.quantity || 1), 0);
 
       const checkoutOrderId = randomUUID();
       const idempotencyKey = `first_offer_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
@@ -821,16 +858,16 @@ const server = createServer(async (req, res) => {
             number: '25448606695',
           },
         },
-        items: [{
-          title: offerName,
-          unitPrice: Math.round(amountCents),
-          quantity: 1,
+        items: validatedItems.map((item) => ({
+          title: item.title,
+          unitPrice: Math.round(item.unitPriceCents),
+          quantity: item.quantity,
           externalRef: checkoutOrderId,
-        }],
+        })),
         external_id: checkoutOrderId,
         externalRef: checkoutOrderId,
         idempotency_key: idempotencyKey,
-        description: offerName,
+        description: validatedItems.map((item) => item.title).join(' + '),
         metadata: {
           checkout_order_id: checkoutOrderId,
           source: 'first_offer_public_checkout',
@@ -838,6 +875,7 @@ const server = createServer(async (req, res) => {
           customer_phone: phoneDigits.length >= 10 ? phoneDigits.slice(0, 11) : null,
           total_items: totalItems,
           total_amount_cents: Math.round(amountCents),
+          items_breakdown: validatedItems,
         },
       };
 
