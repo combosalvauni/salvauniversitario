@@ -119,6 +119,10 @@ function normalizeDigits(value) {
   return String(value || '').replace(/\D/g, '');
 }
 
+function normalizeEmail(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
 function isApprovedPaymentEvent(eventType) {
   const normalized = String(eventType || '').trim().toLowerCase();
   return ['payment.approved', 'order.paid', 'paid', 'approved', 'succeeded', 'success'].includes(normalized);
@@ -524,6 +528,7 @@ const server = createServer(async (req, res) => {
       const requestUrl = new URL(req.url, 'http://localhost');
       const providerOrderId = String(requestUrl.searchParams.get('providerOrderId') || '').trim();
       const checkoutOrderId = String(requestUrl.searchParams.get('checkoutOrderId') || '').trim();
+      const payerEmailParam = normalizeEmail(requestUrl.searchParams.get('payerEmail') || '');
 
       if (!providerOrderId && !checkoutOrderId) {
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -594,13 +599,18 @@ const server = createServer(async (req, res) => {
           const approved = isApprovedPaymentEvent(gatewayStatus);
 
           if (approved) {
-            const buyerEmail = String(
+            const buyerEmail = normalizeEmail(
               upstreamData?.customer?.email
               || upstreamData?.data?.customer?.email
               || upstreamData?.buyer?.email
               || upstreamData?.data?.buyer?.email
+              || upstreamData?.metadata?.customer_email
+              || upstreamData?.data?.metadata?.customer_email
+              || upstreamData?.payer?.email
+              || upstreamData?.data?.payer?.email
+              || payerEmailParam
               || ''
-            ).trim().toLowerCase();
+            );
 
             const buyerPhone = String(
               upstreamData?.customer?.phone
@@ -667,7 +677,8 @@ const server = createServer(async (req, res) => {
               return;
             }
 
-            if (fallbackData) {
+            const fallbackStatus = String(fallbackData?.status || '').toLowerCase();
+            if (fallbackStatus === 'pending_registered') {
               status = 'paid';
               matchedBy = 'provider_status_poll';
               fallbackApplied = true;
@@ -770,6 +781,8 @@ const server = createServer(async (req, res) => {
         metadata: {
           checkout_order_id: checkoutOrderId,
           source: 'first_offer_public_checkout',
+          customer_email: email,
+          customer_phone: phoneDigits.length >= 10 ? phoneDigits.slice(0, 11) : null,
           total_items: totalItems,
           total_amount_cents: Math.round(amountCents),
         },

@@ -809,6 +809,9 @@ async function checkPixPaymentStatus() {
     if (currentPixSession.orderId) {
       params.set("checkoutOrderId", currentPixSession.orderId);
     }
+    if (currentPixSession.customerEmail) {
+      params.set("payerEmail", currentPixSession.customerEmail);
+    }
 
     const response = await fetch(`${firstOfferCheckoutStatusEndpoint}?${params.toString()}`);
     const payload = await response.json().catch(() => null);
@@ -1143,6 +1146,7 @@ if (continueButton) {
       startPixStatusPolling({
         providerOrderId: checkout?.providerOrderId || checkout?.raw?.provider_order_id || null,
         orderId: checkout?.orderId || null,
+        customerEmail: customerEmail,
         amountValue: amountValueFromCheckout,
       });
       openPixStep();
