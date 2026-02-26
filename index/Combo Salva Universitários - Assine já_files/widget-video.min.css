@@ -1,0 +1,21 @@
+/*! elementor - v3.25.0 - 20-11-2024 */
+.elementor-widget-video .elementor-widget-container{overflow:hidden;transform:translateZ(0)}.elementor-widget-video .elementor-wrapper{aspect-ratio:var(--video-aspect-ratio)}.elementor-widget-video .elementor-wrapper iframe,.elementor-widget-video .elementor-wrapper video{height:100%;width:100%;display:flex;border:none;background-color:#000}@supports not (aspect-ratio:1/1){.elementor-widget-video .elementor-wrapper{position:relative;overflow:hidden;height:0;padding-bottom:calc(100% / var(--video-aspect-ratio))}.elementor-widget-video .elementor-wrapper iframe,.elementor-widget-video .elementor-wrapper video{position:absolute;top:0;right:0;bottom:0;left:0}}.elementor-widget-video .elementor-open-inline .elementor-custom-embed-image-overlay{position:absolute;top:0;right:0;bottom:0;left:0;background-size:cover;background-position:50%}.elementor-widget-video .elementor-custom-embed-image-overlay{cursor:pointer;text-align:center}.elementor-widget-video .elementor-custom-embed-image-overlay:hover .elementor-custom-embed-play i{opacity:1}.elementor-widget-video .elementor-custom-embed-image-overlay img{display:block;width:100%;aspect-ratio:var(--video-aspect-ratio);-o-object-fit:cover;object-fit:cover;-o-object-position:center center;object-position:center center}@supports not (aspect-ratio:1/1){.elementor-widget-video .elementor-custom-embed-image-overlay{position:relative;overflow:hidden;height:0;padding-bottom:calc(100% / var(--video-aspect-ratio))}.elementor-widget-video .elementor-custom-embed-image-overlay img{position:absolute;top:0;right:0;bottom:0;left:0}}.elementor-widget-video .e-hosted-video .elementor-video{-o-object-fit:cover;object-fit:cover}.e-con-inner>.elementor-widget-video,.e-con>.elementor-widget-video{width:var(--container-widget-width);--flex-grow:var(--container-widget-flex-grow)}
+/*
+     FILE ARCHIVED ON 13:07:23 Feb 09, 2025 AND RETRIEVED FROM THE
+     INTERNET ARCHIVE ON 02:21:15 Oct 27, 2025.
+     JAVASCRIPT APPENDED BY WAYBACK MACHINE, COPYRIGHT INTERNET ARCHIVE.
+
+     ALL OTHER CONTENT MAY ALSO BE PROTECTED BY COPYRIGHT (17 U.S.C.
+     SECTION 108(a)(3)).
+*/
+/*
+playback timings (ms):
+  captures_list: 0.694
+  exclusion.robots: 0.028
+  exclusion.robots.policy: 0.017
+  esindex: 0.014
+  cdx.remote: 9.672
+  LoadShardBlock: 213.962 (3)
+  PetaboxLoader3.datanode: 194.575 (4)
+  load_resource: 92.262
+*/
