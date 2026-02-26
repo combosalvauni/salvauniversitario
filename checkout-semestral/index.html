@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Checkout</title>
+    <meta name="description" content="Finalize sua compra com total segurança. Ambiente protegido para suas transações." />
+
+    <link
+      rel="icon"
+      type="image/png"
+      href="https://web.archive.org/web/20250209130640im_/https://combosalvauniversitario.com/wp-content/uploads/2024/11/cropped-Diconelogosalvapngpreto-192x192.png"
+    />
+    <link
+      rel="apple-touch-icon"
+      href="https://web.archive.org/web/20250209130640im_/https://combosalvauniversitario.com/wp-content/uploads/2024/11/cropped-Diconelogosalvapngpreto-192x192.png"
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Urbanist:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="page-bg">
+      <div class="layout">
+        <section class="left-col">
+          <img
+            class="hero"
+            src="https://firebasestorage.googleapis.com/v0/b/checkout-area-de-membros.firebasestorage.app/o/uploads%2Fb00287c764c3d22d%2F2025%2F11%2Ff2dce6ba-e6e9-4268-bc8f-b752f0b5a186-1762444816618.png?alt=media&token=d59ef487-2218-48c8-95be-96b1683edf3e"
+            alt="banner oferta"
+          />
+
+          <section class="orange-card">
+            <header class="product-head">
+              <div class="product-thumb-led">
+                <img
+                  class="product-thumb"
+                  src="https://firebasestorage.googleapis.com/v0/b/checkout-area-de-membros.firebasestorage.app/o/uploads%2Fb00287c764c3d22d%2F2025%2F11%2F6accf0e0-08eb-45c9-b755-232aa85d6f88-1762180341104.png?alt=media&token=89ae4c2b-d502-48ac-98d9-a29dc4e2d510"
+                  alt="Combo Salva Universitario - Semestral"
+                />
+              </div>
+              <h1>Combo Salva Universitario - Semestral</h1>
+            </header>
+
+            <section class="order-summary">
+              <h3>Resumo do Pedido</h3>
+              <div class="summary-line">
+                <span>Combo Salva Universitario - Semestral</span>
+                <span>+R$ 159,90</span>
+              </div>
+              <div id="upsell-summary"></div>
+              <div class="summary-divider"></div>
+              <div class="summary-total">
+                <span>Total</span>
+                <strong id="total-price">R$ 159,90</strong>
+              </div>
+            </section>
+          </section>
+        </section>
+
+        <aside class="right-col">
+          <section class="orange-card form-shell">
+            <div id="checkout-loading-overlay" class="checkout-loading-overlay" aria-live="polite" aria-hidden="true">
+              <span class="checkout-loader-circle" aria-hidden="true"></span>
+            </div>
+            <div id="checkout-main-step">
+            <h2>Preencha a informação para envio do produto</h2>
+
+            <div class="input-icon-wrap">
+              <span class="field-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect width="20" height="16" x="2" y="4" rx="2"></rect>
+                  <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"></path>
+                </svg>
+              </span>
+              <input id="email-input" type="email" placeholder="Digite seu e-mail" maxlength="100" autocomplete="email" />
+            </div>
+            <p id="email-error" class="field-error" aria-live="polite"></p>
+
+            <div class="phone-combo">
+              <button id="country-btn" type="button" class="combo-btn country-btn" role="combobox" aria-expanded="false" aria-controls="country-dropdown">
+                <img src="https://flagcdn.com/w40/br.png" alt="Brasil" />
+                <span>+55</span>
+                <em>▾</em>
+              </button>
+              <button id="ddd-btn" type="button" class="combo-btn ddd-btn" role="combobox" aria-expanded="false" aria-controls="ddd-dropdown">
+                <span>DDD</span>
+                <em>▾</em>
+              </button>
+              <div class="input-icon-wrap phone-input-wrap">
+                <span class="field-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path>
+                  </svg>
+                </span>
+                <input id="phone-input" type="tel" inputmode="numeric" placeholder="Digite seu telefone" autocomplete="tel-national" />
+              </div>
+
+              <div id="country-dropdown" class="phone-dropdown country-dropdown" role="listbox" aria-label="Selecionar país">
+                <div class="phone-dropdown-search-wrap">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <circle cx="11" cy="11" r="8"></circle>
+                    <path d="m21 21-4.3-4.3"></path>
+                  </svg>
+                  <input id="country-search" class="phone-dropdown-search" type="text" placeholder="Buscar país..." autocomplete="off" />
+                </div>
+                <div id="country-list" class="phone-dropdown-list"></div>
+              </div>
+
+              <div id="ddd-dropdown" class="phone-dropdown ddd-dropdown" role="listbox" aria-label="Selecionar DDD">
+                <div class="phone-dropdown-search-wrap">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <circle cx="11" cy="11" r="8"></circle>
+                    <path d="m21 21-4.3-4.3"></path>
+                  </svg>
+                  <input id="ddd-search" class="phone-dropdown-search" type="text" placeholder="Buscar DDD..." autocomplete="off" />
+                </div>
+                <div id="ddd-list" class="phone-dropdown-list"></div>
+              </div>
+            </div>
+            <p id="phone-error" class="field-error" aria-live="polite"></p>
+
+            <p class="pay-title">Formas de pagamento</p>
+            <div id="payment-selection-step">
+              <div class="pay-grid">
+                <button class="pay-method active" data-payment="pix" type="button" aria-label="Selecionar Pix">
+                  <span class="pay-icon" aria-hidden="true">
+                    <svg viewBox="0 0 256 256" fill="currentColor">
+                      <path d="M238.16,113.89l-96-96a20,20,0,0,0-28.22,0l-96,96.05a20,20,0,0,0,0,28.22l96.05,96a20,20,0,0,0,28.22,0l96-96a20,20,0,0,0,0-28.22ZM128,37.68,174.32,84H160a12,12,0,0,0-8.49,3.51L128,111,104.49,87.51A12,12,0,0,0,96,84H81.68ZM57.68,108H91l20,20L91,148H57.68l-20-20ZM128,218.32,81.68,172H96a12,12,0,0,0,8.49-3.51L128,145l23.51,23.52A12,12,0,0,0,160,172h14.32ZM198.32,148H165l-20-20,20-20h33.35l20,20Z"></path>
+                    </svg>
+                  </span>
+                  <span>Pix</span>
+                </button>
+                <button class="pay-method" data-payment="card" type="button" aria-label="Selecionar cartão de crédito">
+                  <span class="pay-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <rect width="20" height="14" x="2" y="5" rx="2"></rect>
+                      <line x1="2" x2="22" y1="10" y2="10"></line>
+                    </svg>
+                  </span>
+                  <span>Cartão de crédito</span>
+                </button>
+              </div>
+
+              <button class="continue-btn" type="button">
+                <span class="continue-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="12" y1="2" x2="12" y2="22"></line>
+                    <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
+                  </svg>
+                </span>
+                <span>CONTINUAR</span>
+              </button>
+
+              <p id="checkout-feedback" class="field-error" aria-live="polite"></p>
+
+              <p class="secure-line">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <circle cx="12" cy="16" r="1"></circle>
+                  <rect x="3" y="10" width="18" height="12" rx="2"></rect>
+                  <path d="M7 10V7a5 5 0 0 1 10 0v3"></path>
+                </svg>
+                <span>Transação Segura e Criptografada</span>
+              </p>
+            </div>
+            </div>
+
+            <div id="card-step" class="is-hidden">
+              <button id="card-back-btn" type="button" class="card-back-btn" aria-label="Voltar e editar o pedido">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="m12 19-7-7 7-7"></path>
+                  <path d="M19 12H5"></path>
+                </svg>
+                <span>Voltar e editar o pedido</span>
+              </button>
+
+              <label class="card-label" for="card-number">Dados do Cartão</label>
+              <div class="card-input-stack">
+                <div class="input-icon-wrap card-field">
+                  <span class="field-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <rect width="20" height="14" x="2" y="5" rx="2"></rect>
+                      <line x1="2" x2="22" y1="10" y2="10"></line>
+                    </svg>
+                  </span>
+                  <input id="card-number" type="text" inputmode="numeric" maxlength="19" placeholder="Número do cartão" />
+                </div>
+
+                <div class="card-row">
+                  <div class="input-icon-wrap card-field">
+                    <span class="field-icon" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M8 2v4"></path>
+                        <path d="M16 2v4"></path>
+                        <rect width="18" height="18" x="3" y="4" rx="2"></rect>
+                        <path d="M3 10h18"></path>
+                      </svg>
+                    </span>
+                    <input id="card-expiry" type="text" inputmode="numeric" maxlength="5" placeholder="MM/AA" />
+                  </div>
+                  <div class="input-icon-wrap card-field">
+                    <span class="field-icon" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect width="18" height="11" x="3" y="11" rx="2" ry="2"></rect>
+                        <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                      </svg>
+                    </span>
+                    <input id="card-cvv" type="text" inputmode="numeric" maxlength="4" placeholder="CVV" />
+                  </div>
+                </div>
+              </div>
+
+              <label class="card-label" for="card-holder">Titular do cartão</label>
+              <div class="input-icon-wrap card-field card-block-gap">
+                <span class="field-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"></path>
+                    <circle cx="12" cy="7" r="4"></circle>
+                  </svg>
+                </span>
+                <input id="card-holder" type="text" placeholder="Nome completo" />
+              </div>
+
+              <label class="card-label" for="installments">Número de parcelas</label>
+              <select id="installments" class="installments-select">
+                <option value="1">1x de R$ 159,90</option>
+                <option value="2">2x de R$ 91,69</option>
+                <option value="3">3x de R$ 61,13</option>
+              </select>
+
+              <button class="continue-btn card-confirm-btn" type="button">
+                <span class="continue-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="12" y1="2" x2="12" y2="22"></line>
+                    <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
+                  </svg>
+                </span>
+                <span>CONFIRMAR COMPRA</span>
+              </button>
+
+              <p class="secure-line card-secure-line">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <circle cx="12" cy="16" r="1"></circle>
+                  <rect x="3" y="10" width="18" height="12" rx="2"></rect>
+                  <path d="M7 10V7a5 5 0 0 1 10 0v3"></path>
+                </svg>
+                <span>Transação Segura e Criptografada</span>
+              </p>
+            </div>
+
+            <div id="pix-step" class="is-hidden">
+              <div class="step-head">
+                <button id="pix-back-btn" type="button" class="card-back-btn" aria-label="Voltar e editar o pedido">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="m12 19-7-7 7-7"></path>
+                    <path d="M19 12H5"></path>
+                  </svg>
+                  <span>Voltar e editar o pedido</span>
+                </button>
+                <span class="step-badge">Pagamento</span>
+              </div>
+
+              <div class="pix-panel">
+                <h3>Aqui está o PIX copia e cola</h3>
+
+                <div class="pix-content">
+                  <div class="pix-left">
+                    <p>Copie o código ou use a câmera para ler o QR Code e realize o pagamento no app do seu banco.</p>
+
+                    <div class="pix-copy-row">
+                      <input
+                        id="pix-code-input"
+                        type="text"
+                        readonly
+                        value=""
+                        placeholder="Código PIX será gerado após clicar em Continuar"
+                      />
+                      <button id="pix-copy-btn" type="button">Copiar</button>
+                    </div>
+
+                    <button type="button" class="pix-confirm-btn"><span>✔</span> Confirmar pagamento</button>
+                  </div>
+
+                  <div class="pix-qr-box">
+                    <img
+                      id="pix-qr-image"
+                      src=""
+                      alt="QR Code PIX"
+                    />
+                  </div>
+                </div>
+
+                <div class="pix-timer-box">
+                  <p>Tempo restante: <span id="pix-timer">14:47</span></p>
+                  <div class="pix-progress-track">
+                    <div id="pix-progress-fill" class="pix-progress-fill"></div>
+                  </div>
+                </div>
+
+                <div id="pix-success" class="pix-success is-hidden" aria-live="polite">
+                  <div class="pix-success-check" aria-hidden="true">✓</div>
+                  <h4>Pagamento aprovado com sucesso!</h4>
+                  <p>
+                    Acesse https://app.combosalvauniversitario.site/ e faça o cadastro com os mesmos dados usados na compra para liberar seu acesso.
+                  </p>
+                  <a class="pix-access-btn" href="https://app.combosalvauniversitario.site/" target="_blank" rel="noopener noreferrer">
+                    Acessar plataforma
+                  </a>
+                </div>
+              </div>
+            </div>
+          </section>
+        </aside>
+      </div>
+    </main>
+
+    <footer class="checkout-footer" aria-label="Informações do checkout">
+      <div class="checkout-footer-inner">
+        <div class="checkout-footer-top">
+          <span class="checkout-footer-chip">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"></path>
+              <path d="m9 12 2 2 4-4"></path>
+            </svg>
+            <span>Pagamento 100% seguro</span>
+          </span>
+          <span class="checkout-footer-chip">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect width="18" height="11" x="3" y="11" rx="2" ry="2"></rect>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+            </svg>
+            <span>Site protegido</span>
+          </span>
+          <span class="checkout-footer-chip">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect width="20" height="14" x="2" y="5" rx="2"></rect>
+              <line x1="2" x2="22" y1="10" y2="10"></line>
+            </svg>
+            <span>Diversas formas de pagamento</span>
+          </span>
+        </div>
+
+        <div class="checkout-footer-bottom">
+          <span>Você está em uma página de checkout segura, criada com a tecnologia Mercado Pago. A responsabilidade pela oferta é do vendedor.</span>
+          <span>© 2026 ggCheckout LTDA. Todos os direitos reservados.</span>
+        </div>
+      </div>
+    </footer>
+
+    <script>
+      window.FACEBOOK_PIXEL_ID = window.FACEBOOK_PIXEL_ID || "1580553502953265";
+    </script>
+    <script src="script.js"></script>
+  </body>
+</html>
