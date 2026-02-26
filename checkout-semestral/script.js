@@ -1151,7 +1151,7 @@ if (continueButton) {
       });
       openPixStep();
     } catch (error) {
-      setCheckoutFeedback("");
+      setCheckoutFeedback(error?.message || "Erro ao gerar pagamento. Tente novamente.");
     } finally {
       setContinueLoading(false);
     }
