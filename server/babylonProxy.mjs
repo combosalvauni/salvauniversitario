@@ -497,6 +497,58 @@ const server = createServer(async (req, res) => {
         });
         data = result.data;
         error = result.error;
+
+        // Fallback: se order_not_found, tenta registrar como benefício pendente
+        // (cobre o caso em que a Babylon não ecoa metadata.source no webhook)
+        if (!error && String(data?.status || '').toLowerCase() === 'order_not_found' && isApprovedPaymentEvent(eventType)) {
+          const fallbackEmail = normalizeEmail(
+            payload?.customer?.email
+            || payload?.data?.customer?.email
+            || payload?.metadata?.customer_email
+            || payload?.data?.metadata?.customer_email
+            || ''
+          );
+
+          if (fallbackEmail) {
+            const fallbackPhone = String(
+              payload?.customer?.phone
+              || payload?.data?.customer?.phone
+              || payload?.metadata?.customer_phone
+              || payload?.data?.metadata?.customer_phone
+              || ''
+            ).trim();
+
+            const fallbackAmountCents = [
+              payload?.metadata?.total_amount_cents,
+              payload?.data?.metadata?.total_amount_cents,
+              payload?.amount_cents,
+              payload?.data?.amount_cents,
+              payload?.amount,
+              payload?.data?.amount,
+            ]
+              .map((value) => resolveAmountCents(value))
+              .find((value) => value > 0) || 0;
+            const fallbackCreditAmount = resolveCreditAmountFromCents(fallbackAmountCents);
+
+            const fallbackResult = await supabaseAdmin.rpc('register_pending_checkout_benefit', {
+              p_provider_name: providerName,
+              p_provider_event_id: eventId,
+              p_provider_order_id: providerOrderId || null,
+              p_checkout_order_id: checkoutOrderId || null,
+              p_payer_email: fallbackEmail,
+              p_payer_phone: fallbackPhone || null,
+              p_amount_cents: fallbackAmountCents,
+              p_credit_amount: fallbackCreditAmount,
+              p_activate_store: true,
+              p_metadata: { source: 'webhook_order_not_found_fallback', original_payload: payload },
+            });
+
+            if (!fallbackResult.error) {
+              data = fallbackResult.data;
+              error = null;
+            }
+          }
+        }
       }
 
       if (error) {

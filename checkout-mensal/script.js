@@ -1146,7 +1146,7 @@ if (continueButton) {
       startPixStatusPolling({
         providerOrderId: checkout?.providerOrderId || checkout?.raw?.provider_order_id || null,
         orderId: checkout?.orderId || null,
-        customerEmail: customerEmail,
+        customerEmail: emailInput?.value.trim().toLowerCase() || "",
         amountValue: amountValueFromCheckout,
       });
       openPixStep();

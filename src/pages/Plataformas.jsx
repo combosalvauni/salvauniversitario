@@ -77,45 +77,39 @@ export function Plataformas() {
             setPlatforms(filtered);
 
             if (!isAdmin) {
-                // RLS on platform_accounts only returns accounts assigned to this user and marked show_to_user
                 const nowIso = new Date().toISOString();
 
-                const [
-                    { data: accounts, error: accountsError },
-                    { data: assignments },
-                ] = await Promise.all([
-                    supabase
-                        .from('platform_accounts')
-                        .select('platform_id')
-                        .eq('status', 'active'),
-                    supabase
-                        .from('platform_account_assignments')
-                        .select('valid_from, created_at, platform_accounts!inner(platform_id, status)')
-                        .eq('profile_id', user?.id)
-                        .is('revoked_at', null)
-                        .eq('show_to_user', true)
-                        .lte('valid_from', nowIso)
-                        .or(`valid_until.is.null,valid_until.gt.${nowIso}`)
-                        .eq('platform_accounts.status', 'active'),
-                ]);
+                const { data: assignments, error: assignmentsError } = await supabase
+                    .from('platform_account_assignments')
+                    .select('valid_from, created_at, platform_accounts!inner(platform_id, status)')
+                    .eq('profile_id', user?.id)
+                    .is('revoked_at', null)
+                    .eq('show_to_user', true)
+                    .lte('valid_from', nowIso)
+                    .or(`valid_until.is.null,valid_until.gt.${nowIso}`)
+                    .eq('platform_accounts.status', 'active');
 
-                if (!accountsError) {
-                    setAccessSet(new Set((accounts || []).map((r) => r.platform_id)));
+                if (assignmentsError) throw assignmentsError;
 
-                    const priorityByPlatform = new Map();
-                    for (const row of assignments || []) {
-                        const platformId = row?.platform_accounts?.platform_id;
-                        if (!platformId) continue;
-                        const timeValue = Date.parse(row?.valid_from || row?.created_at || '');
-                        if (!Number.isFinite(timeValue)) continue;
-                        const prev = priorityByPlatform.get(platformId) || 0;
-                        if (timeValue > prev) {
-                            priorityByPlatform.set(platformId, timeValue);
-                        }
+                const platformIdSet = new Set();
+                const priorityByPlatform = new Map();
+
+                for (const row of assignments || []) {
+                    const platformId = row?.platform_accounts?.platform_id;
+                    if (!platformId) continue;
+
+                    platformIdSet.add(platformId);
+
+                    const timeValue = Date.parse(row?.valid_from || row?.created_at || '');
+                    if (!Number.isFinite(timeValue)) continue;
+                    const prev = priorityByPlatform.get(platformId) || 0;
+                    if (timeValue > prev) {
+                        priorityByPlatform.set(platformId, timeValue);
                     }
-
-                    setAccessPriorityMap(priorityByPlatform);
                 }
+
+                setAccessSet(platformIdSet);
+                setAccessPriorityMap(priorityByPlatform);
             } else {
                 setAccessSet(new Set());
                 setAccessPriorityMap(new Map());
@@ -176,12 +170,14 @@ export function Plataformas() {
             return;
         }
 
+        const dedupedAccounts = Array.from(new Map((accounts || []).map((acc) => [acc.id, acc])).values());
+
         setSelectedPlatform({
             id: platform.id,
             name: platform.name,
             platform_extension_link: platform.extension_link,
-            open_link: (accounts || []).find((acc) => acc.extension_link)?.extension_link || platform.extension_link || '',
-            accounts: accounts || [],
+            open_link: dedupedAccounts.find((acc) => acc.extension_link)?.extension_link || platform.extension_link || '',
+            accounts: dedupedAccounts,
         });
     }
 
