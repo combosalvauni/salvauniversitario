@@ -778,8 +778,8 @@ const server = createServer(async (req, res) => {
 
       const offerCatalog = {
         'combo mensal': { offerName: 'Combo mensal', amountCents: 3990 },
-        'combo trimestral': { offerName: 'Combo trimestral', amountCents: 14370 },
-        'combo semestral': { offerName: 'Combo semestral', amountCents: 23790 },
+        'combo trimestral': { offerName: 'Combo trimestral', amountCents: 9490 },
+        'combo semestral': { offerName: 'Combo semestral', amountCents: 15990 },
       };
 
       const selectedOffer = offerCatalog[normalizedOfferName] || null;
