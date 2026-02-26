@@ -153,3 +153,18 @@ export function claimAdminInviteLink(token) {
     prefix: '/api/admin',
   });
 }
+
+export function deleteAdminUser(userId) {
+  return proxyRequest(`/users/${userId}`, {
+    method: 'DELETE',
+    prefix: '/api/admin',
+  });
+}
+
+export function setAdminUserWalletBalance(userId, balance) {
+  return proxyRequest(`/users/${userId}/wallet`, {
+    method: 'PATCH',
+    body: { balance },
+    prefix: '/api/admin',
+  });
+}

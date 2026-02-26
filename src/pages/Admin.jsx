@@ -7,6 +7,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '../components/ui/Card'
 import { Modal } from '../components/ui/Modal';
 import { cn } from '../lib/utils';
 import { supabase } from '../lib/supabase';
+import { deleteAdminUser, setAdminUserWalletBalance } from '../lib/babylonApi';
 import { PlansSettingsPanel } from '../components/admin/PlansSettingsPanel';
 import { InviteLinksPanel } from '../components/admin/InviteLinksPanel';
 
@@ -253,6 +254,9 @@ export function Admin() {
     const [userWalletLoaded, setUserWalletLoaded] = useState(false);
     const [walletCreditInput, setWalletCreditInput] = useState('');
     const [walletCreditSaving, setWalletCreditSaving] = useState(false);
+    const [walletSetInput, setWalletSetInput] = useState('');
+    const [walletSetSaving, setWalletSetSaving] = useState(false);
+    const [userDeleting, setUserDeleting] = useState(false);
 
     const [allPlatforms, setAllPlatforms] = useState([]);
     const [availableAccounts, setAvailableAccounts] = useState([]);
@@ -1468,8 +1472,10 @@ export function Admin() {
             can_access_store: user.can_access_store === true,
         });
         setWalletCreditInput('');
+        setWalletSetInput('');
         setUserWalletLoaded(false);
         setUserWalletBalance(0);
+        setUserDeleting(false);
         loadUserAccess(user.id);
         loadUserWallet(user.id);
         setIsUserModalOpen(true);
@@ -1699,6 +1705,48 @@ export function Admin() {
         setWalletCreditInput('');
         setWalletCreditSaving(false);
         alert('Crédito adicionado com sucesso.');
+    }
+
+    async function setWalletBalanceForUser() {
+        if (!selectedUser?.id) return;
+
+        const amount = Number.parseInt(walletSetInput, 10);
+        if (!Number.isFinite(amount) || amount < 0) {
+            alert('Informe um valor de crédito válido (>= 0).');
+            return;
+        }
+
+        setWalletSetSaving(true);
+        try {
+            const result = await setAdminUserWalletBalance(selectedUser.id, amount);
+            if (result?.balance !== undefined) {
+                setUserWalletBalance(result.balance);
+            } else {
+                await loadUserWallet(selectedUser.id);
+            }
+            setWalletSetInput('');
+            alert('Saldo definido com sucesso.');
+        } catch (err) {
+            alert('Erro ao definir saldo: ' + (err?.message || 'Erro desconhecido'));
+        }
+        setWalletSetSaving(false);
+    }
+
+    async function deleteUser(userId) {
+        if (!userId) return;
+        if (!confirm('Tem certeza que deseja EXCLUIR este usuário? Esta ação não pode ser desfeita. Todos os dados do usuário (perfil, acessos, carteira, pedidos) serão removidos permanentemente.')) return;
+
+        setUserDeleting(true);
+        try {
+            await deleteAdminUser(userId);
+            alert('Usuário excluído com sucesso.');
+            setIsUserModalOpen(false);
+            setSelectedUser(null);
+            fetchUsers();
+        } catch (err) {
+            alert('Erro ao excluir usuário: ' + (err?.message || 'Erro desconhecido'));
+        }
+        setUserDeleting(false);
     }
 
     const searchQuery = search.trim().toLowerCase();
@@ -2756,6 +2804,19 @@ export function Admin() {
                                                         >
                                                             <Edit className="h-4 w-4" />
                                                         </button>
+                                                        <button
+                                                            title="Excluir usuário"
+                                                            onClick={() => deleteUser(user.id)}
+                                                            disabled={user.role === 'admin'}
+                                                            className={cn(
+                                                                "p-2 rounded-lg transition-colors",
+                                                                user.role === 'admin'
+                                                                    ? "text-gray-600 cursor-not-allowed"
+                                                                    : "text-red-400 hover:bg-red-500/10"
+                                                            )}
+                                                        >
+                                                            <Trash2 className="h-4 w-4" />
+                                                        </button>
                                                     </div>
                                                 </td>
                                             </tr>
@@ -3239,6 +3300,28 @@ export function Admin() {
                             <p className="text-xs text-gray-400">
                                 {walletCreditPreview} créditos = {formatBRLFromCredits(walletCreditPreview)}
                             </p>
+
+                            <div className="border-t border-white/10 pt-3 space-y-2">
+                                <p className="text-xs text-gray-400">Definir saldo manualmente (substitui o saldo atual)</p>
+                                <div className="flex gap-2">
+                                    <Input
+                                        type="number"
+                                        min="0"
+                                        step="1"
+                                        value={walletSetInput}
+                                        onChange={(e) => setWalletSetInput(e.target.value)}
+                                        placeholder="Novo saldo em créditos"
+                                    />
+                                    <Button
+                                        type="button"
+                                        variant="ghost"
+                                        onClick={setWalletBalanceForUser}
+                                        isLoading={walletSetSaving}
+                                    >
+                                        Definir
+                                    </Button>
+                                </div>
+                            </div>
                         </div>
                     </div>
 
@@ -3272,6 +3355,17 @@ export function Admin() {
                     </div>
 
                     <div className="pt-4 flex justify-end gap-3">
+                        {selectedUser?.role !== 'admin' && (
+                            <Button
+                                type="button"
+                                variant="ghost"
+                                className="text-red-400 hover:bg-red-500/10 mr-auto"
+                                onClick={() => deleteUser(selectedUser?.id)}
+                                isLoading={userDeleting}
+                            >
+                                <Trash2 className="mr-2 h-4 w-4" /> Excluir Usuário
+                            </Button>
+                        )}
                         <Button
                             type="button"
                             variant="ghost"

@@ -333,6 +333,7 @@ const server = createServer(async (req, res) => {
   const needsSupabase = pathname === '/webhooks/babylon'
     || pathname.startsWith('/api/public/first-offer/checkout-status')
     || pathname.startsWith('/api/admin/invite-links')
+    || pathname.startsWith('/api/admin/users')
     || pathname.startsWith('/api/babylon');
   const needsBabylonAuth = pathname === '/webhooks/babylon'
     || pathname.startsWith('/api/public/first-offer/checkout')
@@ -894,6 +895,137 @@ const server = createServer(async (req, res) => {
         error: 'Falha no checkout público',
         message: error?.message || 'Erro desconhecido',
       }));
+    }
+    return;
+  }
+
+  // ── Admin: Delete user ──
+  const deleteUserMatch = pathname.match(/^\/api\/admin\/users\/([0-9a-f-]{36})$/i);
+  if (deleteUserMatch && req.method === 'DELETE') {
+    const targetUserId = deleteUserMatch[1];
+
+    const authResult = await authenticateRequestUser(req);
+    if (!authResult.user) {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.writeHead(authResult.status);
+      res.end(JSON.stringify({ error: authResult.error }));
+      return;
+    }
+
+    const adminResult = await assertAdminUser(authResult.user.id);
+    if (!adminResult.ok) {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.writeHead(adminResult.status);
+      res.end(JSON.stringify({ error: adminResult.error }));
+      return;
+    }
+
+    if (targetUserId === authResult.user.id) {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.writeHead(400);
+      res.end(JSON.stringify({ error: 'Não é possível excluir a si mesmo' }));
+      return;
+    }
+
+    try {
+      const { error } = await supabaseAdmin.auth.admin.deleteUser(targetUserId);
+      if (error) {
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.writeHead(500);
+        res.end(JSON.stringify({ error: 'Erro ao excluir usuário', message: error.message }));
+        return;
+      }
+
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.writeHead(200);
+      res.end(JSON.stringify({ ok: true }));
+    } catch (err) {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.writeHead(500);
+      res.end(JSON.stringify({ error: 'Erro ao excluir usuário', message: err?.message || 'Erro desconhecido' }));
+    }
+    return;
+  }
+
+  // ── Admin: Set wallet balance ──
+  const walletMatch = pathname.match(/^\/api\/admin\/users\/([0-9a-f-]{36})\/wallet$/i);
+  if (walletMatch && req.method === 'PATCH') {
+    const targetUserId = walletMatch[1];
+
+    const authResult = await authenticateRequestUser(req);
+    if (!authResult.user) {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.writeHead(authResult.status);
+      res.end(JSON.stringify({ error: authResult.error }));
+      return;
+    }
+
+    const adminResult = await assertAdminUser(authResult.user.id);
+    if (!adminResult.ok) {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.writeHead(adminResult.status);
+      res.end(JSON.stringify({ error: adminResult.error }));
+      return;
+    }
+
+    const requestBody = await readRequestBody(req);
+    const payload = parseJsonSafe(requestBody);
+    const newBalance = Number(payload?.balance);
+
+    if (!Number.isFinite(newBalance) || newBalance < 0) {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.writeHead(400);
+      res.end(JSON.stringify({ error: 'Valor de saldo inválido. Deve ser um número >= 0.' }));
+      return;
+    }
+
+    try {
+      const roundedBalance = Math.round(newBalance);
+
+      const { data: existing } = await supabaseAdmin
+        .from('wallet_balances')
+        .select('profile_id')
+        .eq('profile_id', targetUserId)
+        .maybeSingle();
+
+      let error;
+      if (existing) {
+        ({ error } = await supabaseAdmin
+          .from('wallet_balances')
+          .update({ balance: roundedBalance, updated_at: new Date().toISOString() })
+          .eq('profile_id', targetUserId));
+      } else {
+        ({ error } = await supabaseAdmin
+          .from('wallet_balances')
+          .insert({ profile_id: targetUserId, balance: roundedBalance }));
+      }
+
+      if (error) {
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.writeHead(500);
+        res.end(JSON.stringify({ error: 'Erro ao atualizar saldo', message: error.message }));
+        return;
+      }
+
+      // Log the change in wallet_transactions
+      await supabaseAdmin
+        .from('wallet_transactions')
+        .insert({
+          profile_id: targetUserId,
+          amount: roundedBalance - (existing ? 0 : 0),
+          type: 'admin_set',
+          description: `Saldo definido manualmente para ${roundedBalance} créditos pelo admin`,
+        })
+        .then(() => {})
+        .catch(() => {});
+
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.writeHead(200);
+      res.end(JSON.stringify({ ok: true, balance: roundedBalance }));
+    } catch (err) {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.writeHead(500);
+      res.end(JSON.stringify({ error: 'Erro ao atualizar saldo', message: err?.message || 'Erro desconhecido' }));
     }
     return;
   }
