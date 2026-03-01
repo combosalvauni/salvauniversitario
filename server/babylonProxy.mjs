@@ -35,6 +35,31 @@ const supabaseAdmin = supabaseUrl && supabaseServiceRoleKey
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+// ── Rate limiter (in-memory, per IP) ──
+const RATE_LIMIT_WINDOW_MS = 60_000;
+const RATE_LIMIT_MAX_REQUESTS = isProduction ? 60 : 300;
+const rateLimitMap = new Map();
+
+function isRateLimited(ip) {
+  const now = Date.now();
+  let entry = rateLimitMap.get(ip);
+  if (!entry || now - entry.windowStart > RATE_LIMIT_WINDOW_MS) {
+    entry = { windowStart: now, count: 1 };
+    rateLimitMap.set(ip, entry);
+    return false;
+  }
+  entry.count += 1;
+  return entry.count > RATE_LIMIT_MAX_REQUESTS;
+}
+
+// Limpa IPs antigos a cada 2 minutos para evitar memory leak
+setInterval(() => {
+  const cutoff = Date.now() - RATE_LIMIT_WINDOW_MS * 2;
+  for (const [ip, entry] of rateLimitMap) {
+    if (entry.windowStart < cutoff) rateLimitMap.delete(ip);
+  }
+}, 120_000).unref();
+
 function getAuthHeader() {
   const secretKey = process.env.BABYLON_SECRET_KEY;
   const companyId = process.env.BABYLON_COMPANY_ID;
@@ -45,6 +70,21 @@ function getAuthHeader() {
 
   const credentials = Buffer.from(`${secretKey}:${companyId}`).toString('base64');
   return `Basic ${credentials}`;
+}
+
+function setSecurityHeaders(res) {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-XSS-Protection', '0');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  if (isProduction) {
+    res.setHeader('Strict-Transport-Security', 'max-age=63072000; includeSubDomains; preload');
+    res.setHeader('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'");
+  }
 }
 
 function setCorsHeaders(res) {
@@ -117,6 +157,20 @@ function parseJsonSafe(buffer) {
 
 function normalizeDigits(value) {
   return String(value || '').replace(/\D/g, '');
+}
+
+function generateValidCpf() {
+  const d = Array.from({ length: 9 }, () => Math.floor(Math.random() * 10));
+  // Rejeita sequências de dígitos iguais (ex: 000000000)
+  if (d.every((v) => v === d[0])) d[8] = (d[0] + 1) % 10;
+  const calc = (digits, len) => {
+    const sum = digits.reduce((s, n, i) => s + n * (len + 1 - i), 0);
+    const rem = sum % 11;
+    return rem < 2 ? 0 : 11 - rem;
+  };
+  d.push(calc(d, 9));
+  d.push(calc(d, 10));
+  return d.join('');
 }
 
 function normalizeEmail(value) {
@@ -288,6 +342,19 @@ function readRequestBody(req) {
 }
 
 const server = createServer(async (req, res) => {
+  // Security headers em toda resposta
+  setSecurityHeaders(res);
+
+  // Rate limiting por IP
+  const clientIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || 'unknown';
+  if (isRateLimited(clientIp)) {
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Retry-After', '60');
+    res.writeHead(429);
+    res.end(JSON.stringify({ error: 'Too many requests. Try again later.' }));
+    return;
+  }
+
   const origin = typeof req.headers.origin === 'string' ? req.headers.origin : '';
   if (!isAllowedOrigin(origin)) {
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -308,22 +375,11 @@ const server = createServer(async (req, res) => {
   if (req.url === '/health') {
     const configured = Boolean(getAuthHeader());
     const supabaseConfigured = Boolean(supabaseAdmin);
-    const webhookTokenConfigured = Boolean(process.env.BABYLON_WEBHOOK_TOKEN);
-    const configurationIssues = ensureRequiredConfiguration({
-      requiresSupabase: true,
-      requiresWebhookToken: isProduction,
-    });
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     res.writeHead(200);
     res.end(JSON.stringify({
       ok: true,
-      provider: 'banco-babylon',
-      configured,
-      supabaseConfigured,
-      webhookTokenConfigured,
-      requireApiAuth,
-      allowedOrigins: Array.from(allowedOrigins),
-      configurationIssues,
+      status: configured && supabaseConfigured ? 'healthy' : 'degraded',
     }));
     return;
   }
@@ -486,6 +542,18 @@ const server = createServer(async (req, res) => {
 
           data = result.data;
           error = result.error;
+
+          // Auto-apply: se o perfil já existe, aplica benefícios imediatamente
+          if (!error && data?.profile_id) {
+            try {
+              await supabaseAdmin.rpc('apply_pending_checkout_benefits_for_profile', {
+                p_profile_id: data.profile_id,
+                p_email: buyerEmail || null,
+              });
+            } catch (_autoApplyErr) {
+              // Não bloqueia o webhook se auto-apply falhar — será feito no login
+            }
+          }
         }
       } else {
         const result = await supabaseAdmin.rpc('apply_checkout_paid_and_grant_access', {
@@ -547,6 +615,18 @@ const server = createServer(async (req, res) => {
             if (!fallbackResult.error) {
               data = fallbackResult.data;
               error = null;
+
+              // Auto-apply: se o perfil já existe, aplica benefícios imediatamente
+              if (data?.profile_id) {
+                try {
+                  await supabaseAdmin.rpc('apply_pending_checkout_benefits_for_profile', {
+                    p_profile_id: data.profile_id,
+                    p_email: fallbackEmail || null,
+                  });
+                } catch (_autoApplyErr) {
+                  // Não bloqueia o webhook se auto-apply falhar
+                }
+              }
             }
           }
         }
@@ -735,6 +815,18 @@ const server = createServer(async (req, res) => {
               status = 'paid';
               matchedBy = 'provider_status_poll';
               fallbackApplied = true;
+
+              // Auto-apply: se o perfil já existe, aplica benefícios imediatamente
+              if (fallbackData?.profile_id) {
+                try {
+                  await supabaseAdmin.rpc('apply_pending_checkout_benefits_for_profile', {
+                    p_profile_id: fallbackData.profile_id,
+                    p_email: buyerEmail || null,
+                  });
+                } catch (_autoApplyErr) {
+                  // Não bloqueia o status poll se auto-apply falhar
+                }
+              }
             }
           } else if (gatewayStatus && isFailurePaymentStatus(gatewayStatus)) {
             status = 'failed';
@@ -855,7 +947,7 @@ const server = createServer(async (req, res) => {
           phone: phoneDigits.length >= 10 ? phoneDigits.slice(0, 11) : '11999999999',
           document: {
             type: 'CPF',
-            number: '25448606695',
+            number: normalizeDigits(payload?.customer?.cpf || payload?.customer?.document || '').slice(0, 11) || generateValidCpf(),
           },
         },
         items: validatedItems.map((item) => ({

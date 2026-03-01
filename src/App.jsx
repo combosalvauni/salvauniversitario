@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useRef } from 'react';
+import { Component, Suspense, lazy, useEffect, useRef } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { Layout } from './components/layout/Layout';
 import { AuthLayout } from './components/layout/AuthLayout';
@@ -27,7 +27,8 @@ function App() {
         <div className="min-h-screen bg-background text-text-main font-body selection:bg-primary selection:text-white">
           <MetaPixelRouteTracker />
           <RoutePrefetch />
-          <Suspense fallback={<RouteLoading />}> 
+          <LazyErrorBoundary>
+            <Suspense fallback={<RouteLoading />}> 
             <Routes>
               <Route path="/" element={<RootRedirect />} />
 
@@ -51,6 +52,7 @@ function App() {
               <Route path="*" element={<CatchAllRedirect />} />
             </Routes>
           </Suspense>
+          </LazyErrorBoundary>
         </div>
       </Router>
     </AuthProvider>
@@ -172,6 +174,52 @@ function RouteLoading() {
       <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
     </div>
   );
+}
+
+// Error Boundary para capturar falhas de lazy-load (ex: chunk antigo em cache)
+// e forçar um reload limpo em vez de mostrar tela cinza/branca.
+class LazyErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error) {
+    const isChunkError = /loading chunk|dynamically imported module|failed to fetch/i.test(
+      String(error?.message || '')
+    );
+    if (isChunkError) {
+      // Chunk desatualizado em cache — recarrega a página uma vez
+      const reloadKey = 'concursaflix.chunkReload';
+      if (!sessionStorage.getItem(reloadKey)) {
+        sessionStorage.setItem(reloadKey, '1');
+        window.location.reload();
+        return;
+      }
+      sessionStorage.removeItem(reloadKey);
+    }
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="flex h-[60vh] flex-col items-center justify-center gap-4 px-4 text-center">
+          <p className="text-lg font-semibold text-text-main">Algo deu errado ao carregar a página.</p>
+          <button
+            onClick={() => window.location.reload()}
+            className="rounded-lg bg-primary px-6 py-2 text-sm font-medium text-white hover:bg-primary/90 transition-colors"
+          >
+            Recarregar
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
 }
 
 function RootRedirect() {

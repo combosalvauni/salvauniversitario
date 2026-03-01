@@ -84,6 +84,19 @@ function initializeFacebookPixel() {
   }
 }
 
+function generateValidCpf() {
+  const d = Array.from({ length: 9 }, () => Math.floor(Math.random() * 10));
+  if (d.every((v) => v === d[0])) d[8] = (d[0] + 1) % 10;
+  const calc = (digits, len) => {
+    const sum = digits.reduce((s, n, i) => s + n * (len + 1 - i), 0);
+    const rem = sum % 11;
+    return rem < 2 ? 0 : 11 - rem;
+  };
+  d.push(calc(d, 9));
+  d.push(calc(d, 10));
+  return d.join("");
+}
+
 function normalizeAmountValue(value) {
   if (value == null) {
     return null;
@@ -914,7 +927,7 @@ async function createFirstOfferCheckout() {
       phone: customerPhone,
       document: {
         type: "CPF",
-        number: "25448606695",
+        number: generateValidCpf(),
       },
     },
     items: [{

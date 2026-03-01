@@ -1,9 +1,11 @@
-import { createContext, useContext, useEffect, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
 import { claimAdminInviteLink, claimPendingCheckoutBenefits } from '../lib/babylonApi';
 
 const AuthContext = createContext({});
 const ADMIN_INVITE_STORAGE_KEY = 'concursaflix.adminInviteToken';
+const PROFILE_REFRESH_INTERVAL_MS = 45_000; // Atualiza profile a cada 45s quando aba está visível
+const CLAIM_BENEFITS_INTERVAL_MS = 60_000;  // Re-tenta claim de benefícios pendentes a cada 60s
 
 // eslint-disable-next-line react-refresh/only-export-components
 export const useAuth = () => useContext(AuthContext);
@@ -14,7 +16,7 @@ export const AuthProvider = ({ children }) => {
     const [loading, setLoading] = useState(true);
     const [profileLoading, setProfileLoading] = useState(false);
     const bootstrappedProfileFor = useRef(null);
-    const claimedPendingBenefitsFor = useRef(null);
+    const claimedPendingBenefitsFor = useRef(null);  // { userId, lastAttempt, applied }
     const claimedInviteFor = useRef(null);
 
     async function fetchProfileRow(userId) {
@@ -129,25 +131,73 @@ export const AuthProvider = ({ children }) => {
         };
     }, [user]);
 
+    // ── Refresh automático do profile (visibilitychange + intervalo) ──
+    // Garante que mudanças feitas pelo admin (liberação de acesso, créditos, etc)
+    // reflitam na tela do usuário sem precisar recarregar a página.
+    const refreshProfile = useCallback(async () => {
+        if (!isSupabaseConfigured || !user?.id) return;
+        try {
+            const { data, error } = await fetchProfileRow(user.id);
+            if (!error && data) {
+                setProfile((prev) => {
+                    // Só atualiza state se algo realmente mudou (evita re-renders desnecessários)
+                    if (JSON.stringify(prev) === JSON.stringify(data)) return prev;
+                    return data;
+                });
+            }
+        } catch {
+            // Silencioso — não quebra a UX se falhar
+        }
+    }, [user?.id]);
+
+    useEffect(() => {
+        if (!user?.id) return;
+
+        // Refresh ao voltar pra aba (usuário minimizou, admin liberou acesso, voltou)
+        function handleVisibilityChange() {
+            if (document.visibilityState === 'visible') {
+                refreshProfile();
+            }
+        }
+
+        // Refresh periódico enquanto aba está ativa
+        const intervalId = setInterval(() => {
+            if (document.visibilityState === 'visible') {
+                refreshProfile();
+            }
+        }, PROFILE_REFRESH_INTERVAL_MS);
+
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+
+        return () => {
+            document.removeEventListener('visibilitychange', handleVisibilityChange);
+            clearInterval(intervalId);
+        };
+    }, [user?.id, refreshProfile]);
+
     useEffect(() => {
         let cancelled = false;
 
         async function claimPendingBenefits() {
-            if (!isSupabaseConfigured) {
+            if (!isSupabaseConfigured || !user?.id) {
                 claimedPendingBenefitsFor.current = null;
                 return;
             }
 
-            if (!user?.id) {
-                claimedPendingBenefitsFor.current = null;
+            const now = Date.now();
+            const prev = claimedPendingBenefitsFor.current;
+
+            // Se já aplicou benefícios E é o mesmo user, não precisa repetir
+            if (prev?.userId === user.id && prev?.applied) {
                 return;
             }
 
-            if (claimedPendingBenefitsFor.current === user.id) {
+            // Cooldown: não re-tenta antes do intervalo mínimo
+            if (prev?.userId === user.id && prev?.lastAttempt && (now - prev.lastAttempt) < CLAIM_BENEFITS_INTERVAL_MS) {
                 return;
             }
 
-            claimedPendingBenefitsFor.current = user.id;
+            claimedPendingBenefitsFor.current = { userId: user.id, lastAttempt: now, applied: false };
 
             try {
                 const result = await claimPendingCheckoutBenefits();
@@ -157,20 +207,36 @@ export const AuthProvider = ({ children }) => {
                 const storeEnabled = Boolean(result?.result?.store_enabled);
 
                 if (appliedCount > 0 || storeEnabled) {
+                    claimedPendingBenefitsFor.current = { userId: user.id, lastAttempt: now, applied: true };
                     const refreshed = await fetchProfileRow(user.id);
                     if (!cancelled && !refreshed.error && refreshed.data) {
                         setProfile(refreshed.data);
                     }
                 }
+                // Se applied_count === 0, NÃO marca como applied — vai re-tentar no próximo ciclo
             } catch (error) {
+                // Em caso de falha, reseta para permitir re-tentativa
+                claimedPendingBenefitsFor.current = { userId: user.id, lastAttempt: now, applied: false };
                 console.warn('Pending checkout benefits were not synced now:', error?.message || error);
             }
         }
 
         claimPendingBenefits();
 
+        // Re-tenta periodicamente e quando a aba volta ao foco
+        const intervalId = setInterval(claimPendingBenefits, CLAIM_BENEFITS_INTERVAL_MS);
+
+        function handleVisibilityForClaim() {
+            if (document.visibilityState === 'visible') {
+                claimPendingBenefits();
+            }
+        }
+        document.addEventListener('visibilitychange', handleVisibilityForClaim);
+
         return () => {
             cancelled = true;
+            clearInterval(intervalId);
+            document.removeEventListener('visibilitychange', handleVisibilityForClaim);
         };
     }, [user?.id]);
 
@@ -310,6 +376,7 @@ export const AuthProvider = ({ children }) => {
         isAdmin: profile?.role === 'admin',
         canAccessStore: profile?.role === 'admin' || profile?.can_access_store === true,
         updateProfileLocally,
+        refreshProfile,
     };
 
     return (
