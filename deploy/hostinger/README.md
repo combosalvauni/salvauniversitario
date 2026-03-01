@@ -22,8 +22,8 @@ sudo REPO_URL=https://github.com/SEU_USUARIO/SEU_REPO.git API_DOMAIN=api.seudomi
 ```
 
 Esse passo cria/atualiza o app em `/var/www/concursaflix`, configura Nginx e inicia o backend com PM2.
-Se o `certbot` estiver instalado, o script também tenta (re)aplicar o HTTPS automaticamente para `API_DOMAIN`.
-Para desativar essa etapa automática: `SSL_AUTO_CONFIG=false`.
+O nginx da API só é copiado na **primeira instalação** (quando o config ainda não existe). Em deploys seguintes, o config existente (com SSL) é preservado.
+Para forçar atualização do nginx: `FORCE_NGINX_UPDATE=true`.
 
 ## 3) Preencher variáveis de ambiente
 Edite:

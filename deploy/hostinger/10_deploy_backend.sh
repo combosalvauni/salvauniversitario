@@ -5,7 +5,7 @@ APP_DIR=${APP_DIR:-/var/www/concursaflix}
 REPO_URL=${REPO_URL:-}
 BRANCH=${BRANCH:-main}
 API_DOMAIN=${API_DOMAIN:-}
-SSL_AUTO_CONFIG=${SSL_AUTO_CONFIG:-true}
+FORCE_NGINX_UPDATE=${FORCE_NGINX_UPDATE:-false}
 
 if [[ "${EUID}" -ne 0 ]]; then
   echo "Execute como root: sudo REPO_URL=<repo> API_DOMAIN=<dominio> bash deploy/hostinger/10_deploy_backend.sh"
@@ -36,28 +36,43 @@ if [[ ! -f "${APP_DIR}/.env" ]]; then
   echo "Arquivo .env criado em ${APP_DIR}/.env. Preencha as variáveis antes de continuar."
 fi
 
-cp "${APP_DIR}/deploy/hostinger/nginx.api.conf" "/etc/nginx/sites-available/concursaflix-api"
-sed -i "s/__API_DOMAIN__/${API_DOMAIN}/g" "/etc/nginx/sites-available/concursaflix-api"
+# ── Nginx: só copia config na primeira instalação ou com FORCE_NGINX_UPDATE=true ──
+NGINX_CONF="/etc/nginx/sites-available/concursaflix-api"
+NGINX_NEEDS_SETUP=false
 
-ln -sf /etc/nginx/sites-available/concursaflix-api /etc/nginx/sites-enabled/concursaflix-api
-nginx -t
-systemctl reload nginx
+if [[ ! -f "${NGINX_CONF}" ]]; then
+  echo "Nginx: primeira instalação — copiando config da API..."
+  NGINX_NEEDS_SETUP=true
+elif [[ "${FORCE_NGINX_UPDATE}" == "true" ]]; then
+  echo "Nginx: FORCE_NGINX_UPDATE=true — sobrescrevendo config da API..."
+  NGINX_NEEDS_SETUP=true
+else
+  echo "Nginx: config da API já existe — pulando (use FORCE_NGINX_UPDATE=true para forçar)."
+fi
 
-if [[ "${SSL_AUTO_CONFIG}" == "true" ]]; then
+if [[ "${NGINX_NEEDS_SETUP}" == "true" ]]; then
+  cp "${APP_DIR}/deploy/hostinger/nginx.api.conf" "${NGINX_CONF}"
+  sed -i "s/__API_DOMAIN__/${API_DOMAIN}/g" "${NGINX_CONF}"
+  ln -sf "${NGINX_CONF}" /etc/nginx/sites-enabled/concursaflix-api
+  nginx -t
+  systemctl reload nginx
+
+  # Aplica SSL após copiar config HTTP-only
   if command -v certbot >/dev/null 2>&1; then
-    echo "Tentando aplicar/reaplicar SSL para ${API_DOMAIN} via certbot..."
+    echo "Aplicando SSL para ${API_DOMAIN} via certbot..."
     if certbot --nginx -d "${API_DOMAIN}" --non-interactive --agree-tos --redirect; then
-      echo "SSL configurado/reaplicado com sucesso para ${API_DOMAIN}."
+      echo "SSL configurado com sucesso para ${API_DOMAIN}."
     else
-      echo "[aviso] Falha ao (re)aplicar SSL automaticamente via certbot."
-      echo "[aviso] Execute manualmente: sudo API_DOMAIN=${API_DOMAIN} bash deploy/hostinger/20_configure_ssl.sh"
+      echo "[aviso] Falha ao aplicar SSL. Execute manualmente:"
+      echo "  sudo API_DOMAIN=${API_DOMAIN} bash deploy/hostinger/20_configure_ssl.sh"
     fi
   else
-    echo "[aviso] certbot não encontrado. SSL não foi configurado automaticamente."
-    echo "[aviso] Execute manualmente: sudo API_DOMAIN=${API_DOMAIN} bash deploy/hostinger/20_configure_ssl.sh"
+    echo "[aviso] certbot não encontrado. Configure SSL manualmente:"
+    echo "  sudo API_DOMAIN=${API_DOMAIN} bash deploy/hostinger/20_configure_ssl.sh"
   fi
 fi
 
+# ── Backend: restart com PM2 ──
 pm2 delete concursaflix-backend >/dev/null 2>&1 || true
 pm2 start "${APP_DIR}/server/babylonProxy.mjs" --name concursaflix-backend
 pm2 save
