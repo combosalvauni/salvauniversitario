@@ -7,7 +7,8 @@ import { Card, CardHeader, CardTitle, CardContent } from '../components/ui/Card'
 import { Modal } from '../components/ui/Modal';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
-import { createBabylonTransaction } from '../lib/babylonApi';
+import { createBabylonTransaction, getActiveGateway, checkStoreCheckoutStatus } from '../lib/babylonApi';
+import { trackAddToCart, trackInitiateCheckout, trackPurchase } from '../lib/pixel';
 
 const FORBIDDEN_DB_TEXT_REGEX = /salva\s*universit[aá]rio/gi;
 const CHECKOUT_SESSION_STORAGE_KEY = 'concursaflix.checkoutSession';
@@ -156,6 +157,8 @@ function resolveCheckoutArtifacts(responseData) {
     ].filter(Boolean);
 
     const candidatesPixCode = [
+        responseData?.pix?.qrcode,
+        responseData?.data?.pix?.qrcode,
         responseData?.pix?.copyAndPaste,
         responseData?.pix?.copy_paste,
         responseData?.pix?.copyPaste,
@@ -538,6 +541,22 @@ export function Loja() {
                     setWalletBalance(Number(balanceData.balance || 0));
                 }
 
+                const cs = checkoutSession;
+                if (cs?.kind === 'topup') {
+                    trackPurchase({
+                        value: (cs.amountCents || 0) / 100,
+                        contentName: `Recarga de ${cs.topupCredits || 0} créditos`,
+                        transactionId: cs.providerOrderId,
+                    });
+                } else {
+                    trackPurchase({
+                        value: (cs?.amountCents || 0) / 100,
+                        numItems: cs?.accessItems?.length,
+                        contentName: (cs?.accessItems || []).map((i) => i.name).join(', ') || 'Loja',
+                        transactionId: cs?.providerOrderId,
+                    });
+                }
+
                 setStoreNotice('Pagamento confirmado. Acesso liberado nas suas plataformas.');
                 return;
             }
@@ -545,6 +564,59 @@ export function Loja() {
             if (data.status === 'failed') {
                 setStoreNotice('Pagamento não aprovado. Gere um novo checkout para tentar novamente.');
                 return;
+            }
+
+            // Order still pending — poll the gateway directly via the server
+            try {
+                const gatewayPoll = await checkStoreCheckoutStatus(checkoutOrderId);
+                const pollStatus = String(gatewayPoll?.status || 'pending').toLowerCase();
+
+                if (pollStatus === 'paid') {
+                    setCheckoutSession((previous) => ({
+                        ...previous,
+                        status: 'paid',
+                    }));
+
+                    const { data: balanceData } = await supabase
+                        .from('wallet_balances')
+                        .select('balance')
+                        .eq('profile_id', user.id)
+                        .maybeSingle();
+
+                    if (balanceData) {
+                        setWalletBalance(Number(balanceData.balance || 0));
+                    }
+
+                    const cs2 = checkoutSession;
+                    if (cs2?.kind === 'topup') {
+                        trackPurchase({
+                            value: (cs2.amountCents || 0) / 100,
+                            contentName: `Recarga de ${cs2.topupCredits || 0} créditos`,
+                            transactionId: cs2.providerOrderId,
+                        });
+                    } else {
+                        trackPurchase({
+                            value: (cs2?.amountCents || 0) / 100,
+                            numItems: cs2?.accessItems?.length,
+                            contentName: (cs2?.accessItems || []).map((i) => i.name).join(', ') || 'Loja',
+                            transactionId: cs2?.providerOrderId,
+                        });
+                    }
+
+                    setStoreNotice('Pagamento confirmado. Acesso liberado nas suas plataformas.');
+                    return;
+                }
+
+                if (pollStatus === 'failed') {
+                    setCheckoutSession((previous) => ({
+                        ...previous,
+                        status: 'failed',
+                    }));
+                    setStoreNotice('Pagamento não aprovado. Gere um novo checkout para tentar novamente.');
+                    return;
+                }
+            } catch {
+                // Server-side poll failed — not critical, keep polling from Supabase
             }
 
             setStoreNotice('Pagamento ainda pendente. Finalize o PIX enquanto validamos automaticamente.');
@@ -1025,6 +1097,13 @@ export function Loja() {
             return updated;
         });
 
+        if (change > 0 && nextQuantity > 0) {
+            trackAddToCart({
+                contentName: product.name,
+                value: (product.price_monthly_cents || 0) / 100,
+            });
+        }
+
         const result = await persistCartItem(product, nextQuantity, nextSelectedCycle);
         if (!product.store_product_id) {
             setStoreNotice('Produto sem preço definido: carrinho mantido localmente até você enviar os valores.');
@@ -1106,10 +1185,12 @@ export function Loja() {
 
         setCheckoutLoading(true);
         try {
+            const gateway = await getActiveGateway();
+            const providerName = gateway === 'amplopay' ? 'amplopay' : 'banco_babylon';
             const idempotencyKey = buildCheckoutIdempotencyKey(user.id);
             const baseMetadata = sanitizePayloadForDatabase({
                 source: 'wallet_topup',
-                payment_provider: 'banco_babylon',
+                payment_provider: providerName,
                 topup_credits: topupCredits,
                 topup_amount_cents: topupAmountCents,
                 items: [],
@@ -1120,7 +1201,7 @@ export function Loja() {
                 .insert({
                     profile_id: user.id,
                     status: 'draft',
-                    provider_name: 'banco_babylon',
+                    provider_name: providerName,
                     idempotency_key: idempotencyKey,
                     total_credit_cost: 0,
                     purchased_credit: topupCredits,
@@ -1199,7 +1280,7 @@ export function Loja() {
                 .from('checkout_orders')
                 .update({
                     status: isGatewayFailure ? 'failed' : 'pending',
-                    provider_name: 'banco_babylon',
+                    provider_name: providerName,
                     provider_order_id: providerOrderId,
                     metadata: sanitizePayloadForDatabase({
                         ...baseMetadata,
@@ -1213,7 +1294,7 @@ export function Loja() {
                 .eq('id', order.id);
 
             if (isGatewayFailure) {
-                setStoreNotice(`Recarga recusada pela Babylon (status: ${gatewayStatus}).`);
+                setStoreNotice(`Recarga recusada pelo gateway (status: ${gatewayStatus}).`);
                 return;
             }
 
@@ -1311,6 +1392,13 @@ export function Loja() {
             }
 
             await clearCart();
+
+            trackPurchase({
+                value: requiredCredits,
+                numItems: cartItems.length,
+                contentName: cartItems.map((i) => i.name).join(', '),
+            });
+
             setStoreNotice('Pagamento com crédito confirmado. Acesso liberado nas plataformas.');
             navigate('/plataformas');
         } finally {
@@ -1334,6 +1422,9 @@ export function Loja() {
                 return;
             }
 
+            const gateway = await getActiveGateway();
+            const providerName = gateway === 'amplopay' ? 'amplopay' : 'banco_babylon';
+
             const idempotencyKey = buildCheckoutIdempotencyKey(user.id);
             const checkoutAccessItems = cartItems.map((item) => ({
                 name: item.name,
@@ -1343,7 +1434,7 @@ export function Loja() {
 
             const baseMetadata = sanitizePayloadForDatabase({
                 source: 'loja_plataformas',
-                payment_provider: 'banco_babylon',
+                payment_provider: providerName,
                 total_plan_cents: cartTotalPlanCents,
                 total_monthly_cents: cartTotalMonthlyCents,
                 total_payable_cents: cartTotalPayableCents,
@@ -1365,7 +1456,7 @@ export function Loja() {
                 .insert({
                     profile_id: user.id,
                     status: 'draft',
-                    provider_name: 'banco_babylon',
+                    provider_name: providerName,
                     idempotency_key: idempotencyKey,
                     total_credit_cost: cartTotalPayableCredits,
                     metadata: baseMetadata,
@@ -1457,11 +1548,11 @@ export function Loja() {
                 .from('checkout_orders')
                 .update({
                     status: isGatewayFailure ? 'failed' : 'pending',
-                    provider_name: 'banco_babylon',
+                    provider_name: providerName,
                     provider_order_id: providerOrderId,
                     metadata: sanitizePayloadForDatabase({
                         ...baseMetadata,
-                        payment_provider: 'banco_babylon',
+                        payment_provider: providerName,
                         gateway_order_id: providerOrderId,
                         gateway_status: gatewayStatus,
                         gateway_reason: gatewayReason || null,
@@ -1479,8 +1570,8 @@ export function Loja() {
             if (isGatewayFailure) {
                 setStoreNotice(
                     gatewayReason
-                        ? `Pagamento recusado pela Babylon: ${gatewayReason}`
-                        : `Pagamento recusado pela Babylon (status: ${gatewayStatus}).`
+                        ? `Pagamento recusado pelo gateway: ${gatewayReason}`
+                        : `Pagamento recusado pelo gateway (status: ${gatewayStatus}).`
                 );
                 return;
             }
@@ -1520,6 +1611,12 @@ export function Loja() {
             setStoreNotice('Ainda existem itens sem valor definido no carrinho. Ajuste os itens pendentes para continuar.');
             return;
         }
+
+        trackInitiateCheckout({
+            value: (cartTotalPayableCents || 0) / 100,
+            numItems: cartItems.length,
+            contentName: cartItems.map((i) => i.name).join(', '),
+        });
 
         setIsPaymentMethodModalOpen(true);
     }
@@ -1860,8 +1957,8 @@ export function Loja() {
                             className="h-12 w-full text-base"
                             isLoading={checkoutLoading}
                             onClick={async () => {
-                                setIsPaymentMethodModalOpen(false);
                                 await handlePixCheckoutClick();
+                                setIsPaymentMethodModalOpen(false);
                             }}
                         >
                             Pagar com PIX
@@ -1873,8 +1970,8 @@ export function Loja() {
                             className="h-12 w-full"
                             isLoading={checkoutLoading}
                             onClick={async () => {
-                                setIsPaymentMethodModalOpen(false);
                                 await handleCreditCheckoutClick();
+                                setIsPaymentMethodModalOpen(false);
                             }}
                         >
                             Pagar com saldo
@@ -2023,36 +2120,9 @@ export function Loja() {
                             </div>
                         ) : null}
 
-                        {checkoutSession.checkoutUrl ? (
-                            <div className="space-y-2 rounded-xl border border-white/10 bg-black/20 p-3">
-                                <p className="text-xs text-gray-400">2) Ou pague pelo link de checkout</p>
-                                <div className="rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-xs text-gray-200 break-all">
-                                    {checkoutSession.checkoutUrl}
-                                </div>
-                                <div className="grid gap-2 sm:grid-cols-2">
-                                    <Button
-                                        type="button"
-                                        variant="outline"
-                                        onClick={() => copyPaymentLink(checkoutSession.checkoutUrl)}
-                                    >
-                                        <Copy className="h-4 w-4 mr-2" /> Copiar link
-                                    </Button>
-                                    <Button
-                                        type="button"
-                                        onClick={() => window.open(checkoutSession.checkoutUrl, '_blank', 'noopener,noreferrer')}
-                                    >
-                                        <ExternalLink className="h-4 w-4 mr-2" /> Abrir checkout
-                                    </Button>
-                                </div>
-                                {lastCopiedField === 'payment_link' ? (
-                                    <p className="text-[11px] text-green-400">Link copiado com sucesso.</p>
-                                ) : null}
-                            </div>
-                        ) : null}
-
                         {checkoutSession.pixCopyPasteCode ? (
                             <div className="space-y-2 rounded-xl border border-white/10 bg-black/20 p-3">
-                                <p className="text-xs text-gray-400">3) PIX Copia e Cola</p>
+                                <p className="text-xs text-gray-400">2) PIX Copia e Cola</p>
                                 <textarea
                                     readOnly
                                     value={checkoutSession.pixCopyPasteCode}

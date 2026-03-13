@@ -1,12 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { User, CreditCard, Shield, Settings, Gift, Wallet, Copy, CheckCircle2, ExternalLink } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { Modal } from '../components/ui/Modal';
 import { Card, CardHeader, CardTitle, CardContent } from '../components/ui/Card';
 import { useAuth } from '../context/AuthContext';
-import { createBabylonTransaction } from '../lib/babylonApi';
+import { checkCheckoutStatus, createBabylonTransaction, getActiveGateway } from '../lib/babylonApi';
 import { supabase } from '../lib/supabase';
+import { trackPurchase } from '../lib/pixel';
 
 const DEFAULT_PLANS = [
     {
@@ -365,6 +366,131 @@ export function Conta() {
         };
     }, [canAccessStore, user?.id]);
 
+    const refreshTopupStatus = useCallback(async () => {
+        const checkoutOrderId = topupCheckoutSession?.orderId;
+        if (!checkoutOrderId || !user?.id) return;
+
+        try {
+            const { data, error } = await supabase
+                .from('checkout_orders')
+                .select('status, metadata, provider_order_id')
+                .eq('id', checkoutOrderId)
+                .eq('profile_id', user.id)
+                .maybeSingle();
+
+            if (error || !data) {
+                setTopupNotice('Não foi possível atualizar o status da recarga agora.');
+                return;
+            }
+
+            const metadata = data?.metadata || {};
+            setTopupCheckoutSession((previous) => {
+                if (!previous) return previous;
+                return {
+                    ...previous,
+                    status: String(data.status || previous.status || 'pending').toLowerCase(),
+                    providerOrderId: data.provider_order_id || previous.providerOrderId || null,
+                    pixCopyPasteCode: metadata?.pix_copy_paste_code || previous.pixCopyPasteCode || null,
+                    checkoutUrl: metadata?.checkout_url || previous.checkoutUrl || null,
+                    pixQrUrl: metadata?.pix_qr_url || previous.pixQrUrl || null,
+                };
+            });
+
+            if (data.status === 'paid') {
+                const { data: balanceData } = await supabase
+                    .from('wallet_balances')
+                    .select('balance')
+                    .eq('profile_id', user.id)
+                    .maybeSingle();
+
+                setWalletBalance(Math.max(0, Math.round(Number(balanceData?.balance || 0))));
+                setWalletLoaded(true);
+
+                trackPurchase({
+                    value: (topupCheckoutSession?.amountCents || 0) / 100,
+                    contentName: `Recarga de ${topupCheckoutSession?.topupCredits || 0} créditos`,
+                    transactionId: topupCheckoutSession?.providerOrderId,
+                });
+
+                setTopupNotice('Pagamento confirmado. Créditos adicionados à sua conta.');
+                return;
+            }
+
+            if (data.status === 'failed') {
+                setTopupNotice('Pagamento não aprovado. Gere uma nova recarga para tentar novamente.');
+                return;
+            }
+
+            try {
+                const gatewayPoll = await checkCheckoutStatus(checkoutOrderId);
+                const pollStatus = String(gatewayPoll?.status || 'pending').toLowerCase();
+
+                if (pollStatus === 'paid') {
+                    setTopupCheckoutSession((previous) => {
+                        if (!previous) return previous;
+                        return {
+                            ...previous,
+                            status: 'paid',
+                        };
+                    });
+
+                    const { data: balanceData } = await supabase
+                        .from('wallet_balances')
+                        .select('balance')
+                        .eq('profile_id', user.id)
+                        .maybeSingle();
+
+                    setWalletBalance(Math.max(0, Math.round(Number(balanceData?.balance || 0))));
+                    setWalletLoaded(true);
+
+                    trackPurchase({
+                        value: (topupCheckoutSession?.amountCents || 0) / 100,
+                        contentName: `Recarga de ${topupCheckoutSession?.topupCredits || 0} créditos`,
+                        transactionId: topupCheckoutSession?.providerOrderId,
+                    });
+
+                    setTopupNotice('Pagamento confirmado. Créditos adicionados à sua conta.');
+                    return;
+                }
+
+                if (pollStatus === 'failed') {
+                    setTopupCheckoutSession((previous) => {
+                        if (!previous) return previous;
+                        return {
+                            ...previous,
+                            status: 'failed',
+                        };
+                    });
+                    setTopupNotice('Pagamento não aprovado. Gere uma nova recarga para tentar novamente.');
+                    return;
+                }
+            } catch {
+                // Mantém o polling pelo Supabase quando a checagem direta no gateway falhar.
+            }
+
+            setTopupNotice('Pagamento ainda pendente. Finalize o PIX enquanto validamos automaticamente.');
+        } catch {
+            setTopupNotice('Não foi possível atualizar o status da recarga agora.');
+        }
+    }, [topupCheckoutSession?.orderId, user?.id]);
+
+    useEffect(() => {
+        if (typeof window === 'undefined') return undefined;
+        const checkoutOrderId = topupCheckoutSession?.orderId;
+        const status = String(topupCheckoutSession?.status || 'pending').toLowerCase();
+
+        if (!checkoutOrderId || ['paid', 'failed', 'canceled', 'cancelled'].includes(status)) {
+            return undefined;
+        }
+
+        refreshTopupStatus();
+        const intervalId = window.setInterval(() => {
+            refreshTopupStatus();
+        }, 5000);
+
+        return () => window.clearInterval(intervalId);
+    }, [topupCheckoutSession?.orderId, topupCheckoutSession?.status, refreshTopupStatus]);
+
     const availablePlans = useMemo(
         () => plans.filter((plan) => normalizeSlug(plan.slug) !== 'anual'),
         [plans]
@@ -486,10 +612,12 @@ export function Conta() {
         setTopupCopiedField('');
         setTopupLoading(true);
         try {
+            const gateway = await getActiveGateway();
+            const providerName = gateway === 'amplopay' ? 'amplopay' : 'banco_babylon';
             const idempotencyKey = buildCheckoutIdempotencyKey(user.id);
             const baseMetadata = sanitizePayloadForDatabase({
                 source: 'wallet_topup',
-                payment_provider: 'banco_babylon',
+                payment_provider: providerName,
                 topup_credits: topupCredits,
                 topup_amount_cents: topupAmountCents,
                 items: [],
@@ -500,7 +628,7 @@ export function Conta() {
                 .insert({
                     profile_id: user.id,
                     status: 'draft',
-                    provider_name: 'banco_babylon',
+                    provider_name: providerName,
                     idempotency_key: idempotencyKey,
                     total_credit_cost: 0,
                     purchased_credit: topupCredits,
@@ -581,7 +709,7 @@ export function Conta() {
                 .from('checkout_orders')
                 .update({
                     status: isGatewayFailure ? 'failed' : 'pending',
-                    provider_name: 'banco_babylon',
+                    provider_name: providerName,
                     provider_order_id: providerOrderId,
                     metadata: sanitizePayloadForDatabase({
                         ...baseMetadata,
@@ -596,11 +724,13 @@ export function Conta() {
 
             if (isGatewayFailure) {
                 setTopupCheckoutSession(null);
-                setTopupNotice(`Recarga recusada pela Babylon (status: ${gatewayStatus}).`);
+                setTopupNotice(`Recarga recusada pelo gateway (status: ${gatewayStatus}).`);
                 return;
             }
 
             setTopupCheckoutSession({
+                orderId: order.id,
+                providerOrderId,
                 topupCredits,
                 amountCents: topupAmountCents,
                 status: gatewayStatus,
@@ -896,36 +1026,9 @@ export function Conta() {
                                         </div>
                                     ) : null}
 
-                                    {topupCheckoutSession.checkoutUrl ? (
-                                        <div className="space-y-2 rounded-xl border border-white/10 bg-black/20 p-3">
-                                            <p className="text-xs text-gray-400">2) Ou pague pelo link de checkout</p>
-                                            <div className="rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-xs text-gray-200 break-all">
-                                                {topupCheckoutSession.checkoutUrl}
-                                            </div>
-                                            <div className="grid gap-2 sm:grid-cols-2">
-                                                <Button
-                                                    type="button"
-                                                    variant="outline"
-                                                    onClick={() => copyTopupPaymentLink(topupCheckoutSession.checkoutUrl)}
-                                                >
-                                                    <Copy className="h-4 w-4 mr-2" /> Copiar link
-                                                </Button>
-                                                <Button
-                                                    type="button"
-                                                    onClick={() => window.open(topupCheckoutSession.checkoutUrl, '_blank', 'noopener,noreferrer')}
-                                                >
-                                                    <ExternalLink className="h-4 w-4 mr-2" /> Abrir checkout
-                                                </Button>
-                                            </div>
-                                            {topupCopiedField === 'payment_link' ? (
-                                                <p className="text-[11px] text-green-400">Link copiado com sucesso.</p>
-                                            ) : null}
-                                        </div>
-                                    ) : null}
-
                                     {topupCheckoutSession.pixCopyPasteCode ? (
                                         <div className="space-y-2 rounded-xl border border-white/10 bg-black/20 p-3">
-                                            <p className="text-xs text-gray-400">3) PIX Copia e Cola</p>
+                                            <p className="text-xs text-gray-400">2) PIX Copia e Cola</p>
                                             <textarea
                                                 readOnly
                                                 value={topupCheckoutSession.pixCopyPasteCode}

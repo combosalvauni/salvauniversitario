@@ -6,6 +6,7 @@ import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
+import { trackCompleteRegistration } from '../lib/pixel';
 
 const _MOTION = motion;
 
@@ -113,6 +114,7 @@ export function Login() {
                     }
                 });
                 if (error) throw error;
+                trackCompleteRegistration({ email: normalizedEmail });
                 setSuccess('Cadastro realizado! Verifique seu e-mail para confirmar e depois faça login.');
                 setIsLogin(true);
             }
