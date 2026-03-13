@@ -59,6 +59,82 @@ const supabaseAdmin = supabaseUrl && supabaseServiceRoleKey
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+// ── Meta Conversions API (server-side) ──
+const META_PIXEL_ID = String(process.env.META_PIXEL_ID || '1580553502953265').trim();
+const META_CAPI_ACCESS_TOKEN = String(process.env.META_CAPI_ACCESS_TOKEN || '').trim();
+const META_CAPI_ENDPOINT = `https://graph.facebook.com/v21.0/${META_PIXEL_ID}/events`;
+
+async function sendMetaConversionEvent({ eventName, eventId, email, phone, value, currency, transactionId, sourceUrl, ipAddress, userAgent }) {
+  if (!META_CAPI_ACCESS_TOKEN || !META_PIXEL_ID) {
+    return;
+  }
+
+  try {
+    const userData = {};
+    if (email) {
+      userData.em = [createHash('sha256').update(email.trim().toLowerCase()).digest('hex')];
+    }
+    if (phone) {
+      const digits = phone.replace(/\D/g, '');
+      if (digits.length >= 10) {
+        userData.ph = [createHash('sha256').update(digits).digest('hex')];
+      }
+    }
+    if (ipAddress) {
+      userData.client_ip_address = ipAddress;
+    }
+    if (userAgent) {
+      userData.client_user_agent = userAgent;
+    }
+    userData.country = [createHash('sha256').update('br').digest('hex')];
+
+    const eventData = {
+      event_name: eventName,
+      event_time: Math.floor(Date.now() / 1000),
+      action_source: 'website',
+      user_data: userData,
+    };
+
+    if (eventId) {
+      eventData.event_id = eventId;
+    }
+
+    if (sourceUrl) {
+      eventData.event_source_url = sourceUrl;
+    }
+
+    const customData = {};
+    if (currency) customData.currency = currency;
+    if (value != null && Number.isFinite(Number(value)) && Number(value) > 0) {
+      customData.value = Number(Number(value).toFixed(2));
+    }
+    if (transactionId) customData.order_id = transactionId;
+    if (Object.keys(customData).length > 0) {
+      eventData.custom_data = customData;
+    }
+
+    const body = JSON.stringify({
+      data: [eventData],
+      access_token: META_CAPI_ACCESS_TOKEN,
+    });
+
+    const response = await fetch(META_CAPI_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+    });
+
+    if (response.ok) {
+      console.log(`[meta-capi] ${eventName} sent for ${email || 'unknown'} | eventId=${eventId || 'none'} | value=${value || 0}`);
+    } else {
+      const errText = await response.text().catch(() => '');
+      console.warn(`[meta-capi] ${eventName} failed HTTP ${response.status}: ${errText.slice(0, 200)}`);
+    }
+  } catch (err) {
+    console.warn(`[meta-capi] ${eventName} error: ${err?.message}`);
+  }
+}
+
 // ── Rate limiter (in-memory, per IP) ──
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX_REQUESTS = isProduction ? 60 : 300;
@@ -724,6 +800,21 @@ const server = createServer(async (req, res) => {
               // Não bloqueia o webhook se auto-apply falhar — será feito no login
             }
           }
+
+          // Meta CAPI: Purchase server-side
+          if (!error) {
+            sendMetaConversionEvent({
+              eventName: 'Purchase',
+              eventId: `purchase_${providerOrderId || checkoutOrderId || eventId}`,
+              email: buyerEmail,
+              phone: buyerPhone,
+              value: amountCents > 0 ? (amountCents / 100) : null,
+              currency: 'BRL',
+              transactionId: providerOrderId,
+              sourceUrl: publicAppUrl || 'https://combosalvauniversitario.com',
+              ipAddress: webhookIp,
+            });
+          }
         }
       } else {
         const result = await supabaseAdmin.rpc('apply_checkout_paid_and_grant_access', {
@@ -797,6 +888,19 @@ const server = createServer(async (req, res) => {
                   // Não bloqueia o webhook se auto-apply falhar
                 }
               }
+
+              // Meta CAPI: Purchase server-side (fallback path)
+              sendMetaConversionEvent({
+                eventName: 'Purchase',
+                eventId: `purchase_${providerOrderId || checkoutOrderId || eventId}`,
+                email: fallbackEmail,
+                phone: fallbackPhone,
+                value: fallbackAmountCents > 0 ? (fallbackAmountCents / 100) : null,
+                currency: 'BRL',
+                transactionId: providerOrderId,
+                sourceUrl: publicAppUrl || 'https://combosalvauniversitario.com',
+                ipAddress: webhookIp,
+              });
             }
           }
         }
@@ -938,6 +1042,20 @@ const server = createServer(async (req, res) => {
                 p_email: clientEmail || null,
               });
             } catch (_autoApplyErr) { /* will be applied on login */ }
+          }
+
+          // Meta CAPI: Purchase server-side (AmploPay webhook)
+          if (!error) {
+            sendMetaConversionEvent({
+              eventName: 'Purchase',
+              eventId: `purchase_${transactionId || checkoutOrderId || eventId}`,
+              email: clientEmail,
+              phone: clientPhone,
+              value: amountCents > 0 ? (amountCents / 100) : null,
+              currency: 'BRL',
+              transactionId: transactionId,
+              sourceUrl: publicAppUrl || 'https://combosalvauniversitario.com',
+            });
           }
         }
       } else {
@@ -1212,6 +1330,21 @@ const server = createServer(async (req, res) => {
                 status = 'paid';
                 matchedBy = 'provider_status_poll';
                 fallbackApplied = true;
+
+                // ── Meta CAPI: server-side Purchase (AmploPay status poll fallback) ──
+                sendMetaConversionEvent({
+                  eventName: 'Purchase',
+                  eventId: `purchase_poll_amplopay_${providerOrderId}`,
+                  email: buyerEmail,
+                  phone: buyerPhone,
+                  value: amountBrl > 0 ? amountBrl : (amountCents > 0 ? (amountCents / 100) : null),
+                  currency: 'BRL',
+                  transactionId: providerOrderId,
+                  sourceUrl: 'https://combosalvauniversitario.com',
+                  ipAddress: req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress,
+                  userAgent: req.headers['user-agent'],
+                });
+
                 if (fallbackData?.profile_id) {
                   try {
                     await supabaseAdmin.rpc('apply_pending_checkout_benefits_for_profile', { p_profile_id: fallbackData.profile_id, p_email: buyerEmail || null });
@@ -1335,6 +1468,20 @@ const server = createServer(async (req, res) => {
                 status = 'paid';
                 matchedBy = 'provider_status_poll';
                 fallbackApplied = true;
+
+                // ── Meta CAPI: server-side Purchase (Babylon status poll fallback) ──
+                sendMetaConversionEvent({
+                  eventName: 'Purchase',
+                  eventId: `purchase_poll_babylon_${providerOrderId}`,
+                  email: buyerEmail,
+                  phone: buyerPhone,
+                  value: amountCents > 0 ? (amountCents / 100) : null,
+                  currency: 'BRL',
+                  transactionId: providerOrderId,
+                  sourceUrl: 'https://combosalvauniversitario.com',
+                  ipAddress: req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress,
+                  userAgent: req.headers['user-agent'],
+                });
 
                 if (fallbackData?.profile_id) {
                   try {
