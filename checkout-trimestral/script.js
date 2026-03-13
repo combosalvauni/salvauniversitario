@@ -253,24 +253,6 @@ function resolveFirstOfferCheckoutStatusEndpoint() {
 
 const firstOfferCheckoutStatusEndpoint = resolveFirstOfferCheckoutStatusEndpoint();
 
-function resolveBabylonTransactionsEndpoint() {
-  const configuredProxyBase = String(window.BABYLON_PROXY_URL || "").trim().replace(/\/$/, "");
-  if (configuredProxyBase) {
-    return `${configuredProxyBase}/api/babylon/transactions`;
-  }
-
-  const isStaticServer = window.location.protocol === "file:"
-    || window.location.port === "5500"
-    || window.location.port === "5501";
-
-  if (isStaticServer) {
-    return "https://api.combosalvauniversitario.site/api/babylon/transactions";
-  }
-
-  return "https://api.combosalvauniversitario.site/api/babylon/transactions";
-}
-
-const babylonTransactionsEndpoint = resolveBabylonTransactionsEndpoint();
 initializeFacebookPixel();
 
 const blockedEmailDomains = new Set(["ffevgfr.com"]);
@@ -703,6 +685,8 @@ function resolveCheckoutArtifacts(responseData) {
     responseData?.pixCopyPasteCode,
     responseData?.pixCode,
     responseData?.pix_code,
+    responseData?.pix?.qrcode,
+    responseData?.data?.pix?.qrcode,
     responseData?.pix?.copyAndPaste,
     responseData?.pix?.copy_paste,
     responseData?.pix?.copyPaste,
@@ -903,76 +887,10 @@ async function createFirstOfferCheckout() {
     return payload;
   }
 
-  const shouldFallbackToDirectTransactions = response.status === 404;
-  if (!shouldFallbackToDirectTransactions) {
-    const endpointHint = `endpoint: ${firstOfferCheckoutEndpoint}`;
-    const message = payload?.error
-      || payload?.message
-      || `Não foi possível iniciar o checkout PIX (HTTP ${response.status}). ${endpointHint}`;
-    throw new Error(message);
-  }
-
-  const generatedOrderId = (window.crypto && typeof window.crypto.randomUUID === "function")
-    ? window.crypto.randomUUID()
-    : `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
-
-  const directPayload = {
-    amount: amountCents,
-    currency: "BRL",
-    payment_method: "PIX",
-    paymentMethod: "PIX",
-    customer: {
-      name: customerEmail.split("@")[0] || "Cliente",
-      email: customerEmail,
-      phone: customerPhone,
-      document: {
-        type: "CPF",
-        number: generateValidCpf(),
-      },
-    },
-    items: [{
-      title: "Combo trimestral",
-      unitPrice: amountCents,
-      quantity: 1,
-      externalRef: generatedOrderId,
-    }],
-    external_id: generatedOrderId,
-    externalRef: generatedOrderId,
-    metadata: {
-      checkout_order_id: generatedOrderId,
-      source: "first_offer_public_checkout",
-      total_items: orderItems.reduce((sum, item) => sum + Number(item.quantity || 1), 0),
-      total_amount_cents: amountCents,
-    },
-  };
-
-  const directResponse = await fetch(babylonTransactionsEndpoint, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(directPayload),
-  });
-
-  const directData = await directResponse.json().catch(() => null);
-  if (!directResponse.ok || !directData) {
-    const endpointHint = `endpoints: ${firstOfferCheckoutEndpoint} e ${babylonTransactionsEndpoint}`;
-    const message = directData?.error
-      || directData?.message
-      || `Não foi possível iniciar o checkout PIX (HTTP ${directResponse.status}). ${endpointHint}`;
-    throw new Error(message);
-  }
-
-  const artifacts = resolveCheckoutArtifacts(directData);
-  return {
-    ok: true,
-    orderId: generatedOrderId,
-    providerOrderId: directData?.id || null,
-    gatewayStatus: String(directData?.status || "pending").toLowerCase(),
-    pixCopyPasteCode: artifacts.pixCopyPasteCode,
-    pixQrUrl: artifacts.pixQrUrl,
-    raw: directData,
-  };
+  const message = payload?.error
+    || payload?.message
+    || "Não foi possível iniciar o checkout PIX. Tente novamente.";
+  throw new Error(message);
 }
 
 function closeCardStep() {
