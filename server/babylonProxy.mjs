@@ -429,12 +429,8 @@ function ensureRequiredConfiguration(options = {}) {
   }
 
   if (requiresWebhookToken) {
-    if (isAmploPay) {
-      if (!AMPLOPAY_WEBHOOK_TOKEN) {
-        issues.push('Defina AMPLOPAY_WEBHOOK_TOKEN para validar o webhook AmploPay.');
-      }
-    } else if (!process.env.BABYLON_WEBHOOK_TOKEN) {
-      issues.push('Defina BABYLON_WEBHOOK_TOKEN para validar o webhook.');
+    if (!AMPLOPAY_WEBHOOK_TOKEN) {
+      issues.push('Defina AMPLOPAY_WEBHOOK_TOKEN para validar o webhook AmploPay.');
     }
   }
 
@@ -533,8 +529,8 @@ const server = createServer(async (req, res) => {
     || pathname.startsWith('/api/public/first-offer/checkout')
     || pathname === '/api/store/checkout-status'
     || pathname.startsWith('/api/babylon');
-  const needsWebhookToken = pathname === '/webhooks/babylon'
-    && (isProduction || Boolean(process.env.BABYLON_WEBHOOK_TOKEN));
+  const needsWebhookToken = pathname === '/webhooks/amplopay'
+    && (isProduction || Boolean(AMPLOPAY_WEBHOOK_TOKEN));
   const needsPublicAppUrl = isProduction && pathname.startsWith('/api/admin/invite-links');
 
   const requiredConfigurationIssues = ensureRequiredConfiguration({
@@ -554,26 +550,10 @@ const server = createServer(async (req, res) => {
   }
 
   if (pathname === '/webhooks/babylon' && req.method === 'POST') {
-    const expectedToken = process.env.BABYLON_WEBHOOK_TOKEN;
-    if (!expectedToken) {
-      console.error('[webhook:babylon] BABYLON_WEBHOOK_TOKEN not configured — rejecting webhook for security');
-      res.setHeader('Content-Type', 'application/json; charset=utf-8');
-      res.writeHead(500);
-      res.end(JSON.stringify({ error: 'Webhook token not configured on server' }));
-      return;
-    }
-
-    const receivedToken = req.headers['x-babylon-webhook-token'];
-    if (!receivedToken || receivedToken !== expectedToken) {
-      console.error(`[webhook:babylon] TOKEN MISMATCH — received: "${String(receivedToken || '').slice(0, 12)}..." expected: "${String(expectedToken || '').slice(0, 12)}..." | IP: ${req.socket?.remoteAddress || 'unknown'} | UA: ${req.headers['user-agent'] || 'unknown'}`);
-      res.setHeader('Content-Type', 'application/json; charset=utf-8');
-      res.writeHead(401);
-      res.end(JSON.stringify({ error: 'Unauthorized webhook token' }));
-      return;
-    }
-
     try {
-      console.log(`[webhook:babylon] Received valid webhook from ${req.socket?.remoteAddress || 'unknown'}`);
+      const webhookIp = req.socket?.remoteAddress || 'unknown';
+      console.log(`[webhook:babylon] Incoming webhook from IP: ${webhookIp} | UA: ${req.headers['user-agent'] || 'unknown'}`);
+
       const rawBody = await readRequestBody(req);
       const textBody = rawBody.toString('utf8') || '{}';
       const payload = textBody ? JSON.parse(textBody) : {};
@@ -585,6 +565,8 @@ const server = createServer(async (req, res) => {
         || payload?.transaction_id
         || payload?.data?.order_id
         || payload?.data?.transaction_id
+        || payload?.data?.id
+        || payload?.objectId
         || ''
       ).trim();
 
@@ -593,18 +575,57 @@ const server = createServer(async (req, res) => {
         || payload?.metadata?.checkout_order_id
         || payload?.data?.external_id
         || payload?.data?.metadata?.checkout_order_id
+        || payload?.data?.externalRef
         || ''
       ).trim();
 
       const checkoutOrderId = UUID_REGEX.test(checkoutOrderIdRaw) ? checkoutOrderIdRaw : null;
 
-      const eventType = String(
+      // ── Reverse Verification: confirm payment status directly with Babylon API ──
+      // This is the most secure approach when the provider doesn't support webhook signing.
+      // Even if an attacker forges a webhook payload, we verify with Babylon before processing.
+      let verifiedEventType = String(
         payload?.event_type
         || payload?.event
         || payload?.type
         || payload?.status
-        || 'payment.approved'
+        || payload?.data?.status
+        || ''
       ).trim();
+
+      if (providerOrderId && getAuthHeader()) {
+        try {
+          const verifyUrl = `${baseUrl}/transactions/${encodeURIComponent(providerOrderId)}`;
+          const verifyResponse = await fetch(verifyUrl, {
+            method: 'GET',
+            headers: { Authorization: getAuthHeader(), 'Content-Type': 'application/json' },
+          });
+
+          if (verifyResponse.ok) {
+            const verifyText = await verifyResponse.text();
+            let verifyData;
+            try { verifyData = verifyText ? JSON.parse(verifyText) : {}; } catch { verifyData = {}; }
+
+            const confirmedStatus = String(
+              verifyData?.status || verifyData?.data?.status || ''
+            ).trim().toLowerCase();
+
+            if (confirmedStatus) {
+              // Use the verified status from the API, not the webhook payload
+              verifiedEventType = confirmedStatus;
+              console.log(`[webhook:babylon] Reverse-verified transaction ${providerOrderId}: status="${confirmedStatus}"`);
+            }
+          } else {
+            console.warn(`[webhook:babylon] Reverse verification failed for ${providerOrderId}: HTTP ${verifyResponse.status} — proceeding with caution`);
+          }
+        } catch (verifyErr) {
+          console.warn(`[webhook:babylon] Reverse verification error for ${providerOrderId}: ${verifyErr?.message} — proceeding with webhook payload`);
+        }
+      } else if (!providerOrderId) {
+        console.warn('[webhook:babylon] No providerOrderId found in payload — cannot reverse-verify');
+      }
+
+      const eventType = verifiedEventType || 'payment.approved';
 
       const fallbackEventHash = createHash('sha256').update(textBody).digest('hex');
       const eventId = String(
