@@ -125,7 +125,7 @@ async function sendMetaConversionEvent({ eventName, eventId, email, phone, value
     });
 
     if (response.ok) {
-      console.log(`[meta-capi] ${eventName} sent for ${email || 'unknown'} | eventId=${eventId || 'none'} | value=${value || 0}`);
+      console.log(`[meta-capi] ${eventName} sent | eventId=${eventId || 'none'} | value=${value || 0}`);
     } else {
       const errText = await response.text().catch(() => '');
       console.warn(`[meta-capi] ${eventName} failed HTTP ${response.status}: ${errText.slice(0, 200)}`);
@@ -158,7 +158,26 @@ setInterval(() => {
   for (const [ip, entry] of rateLimitMap) {
     if (entry.windowStart < cutoff) rateLimitMap.delete(ip);
   }
+  for (const [ip, entry] of checkoutRateLimitMap) {
+    if (entry.windowStart < cutoff) checkoutRateLimitMap.delete(ip);
+  }
 }, 120_000).unref();
+
+// ── Checkout-specific rate limiter (tighter: 5 req/min per IP) ──
+const CHECKOUT_RATE_LIMIT_MAX = 5;
+const checkoutRateLimitMap = new Map();
+
+function isCheckoutRateLimited(ip) {
+  const now = Date.now();
+  let entry = checkoutRateLimitMap.get(ip);
+  if (!entry || now - entry.windowStart > RATE_LIMIT_WINDOW_MS) {
+    entry = { windowStart: now, count: 1 };
+    checkoutRateLimitMap.set(ip, entry);
+    return false;
+  }
+  entry.count += 1;
+  return entry.count > CHECKOUT_RATE_LIMIT_MAX;
+}
 
 function getAuthHeader() {
   const secretKey = process.env.BABYLON_SECRET_KEY;
@@ -525,10 +544,21 @@ function ensureRequiredConfiguration(options = {}) {
   return issues;
 }
 
+const MAX_BODY_BYTES = 1_048_576; // 1 MB
+
 function readRequestBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
-    req.on('data', (chunk) => chunks.push(chunk));
+    let totalBytes = 0;
+    req.on('data', (chunk) => {
+      totalBytes += chunk.length;
+      if (totalBytes > MAX_BODY_BYTES) {
+        req.destroy();
+        reject(new Error('Request body too large'));
+        return;
+      }
+      chunks.push(chunk);
+    });
     req.on('end', () => resolve(Buffer.concat(chunks)));
     req.on('error', reject);
   });
@@ -692,10 +722,18 @@ const server = createServer(async (req, res) => {
               console.log(`[webhook:babylon] Reverse-verified transaction ${providerOrderId}: status="${confirmedStatus}"`);
             }
           } else {
-            console.warn(`[webhook:babylon] Reverse verification failed for ${providerOrderId}: HTTP ${verifyResponse.status} — proceeding with caution`);
+            console.warn(`[webhook:babylon] Reverse verification failed for ${providerOrderId}: HTTP ${verifyResponse.status} — rejecting webhook`);
+            res.setHeader('Content-Type', 'application/json; charset=utf-8');
+            res.writeHead(503);
+            res.end(JSON.stringify({ error: 'Reverse verification failed' }));
+            return;
           }
         } catch (verifyErr) {
-          console.warn(`[webhook:babylon] Reverse verification error for ${providerOrderId}: ${verifyErr?.message} — proceeding with webhook payload`);
+          console.warn(`[webhook:babylon] Reverse verification error for ${providerOrderId}: ${verifyErr?.message} — rejecting webhook`);
+          res.setHeader('Content-Type', 'application/json; charset=utf-8');
+          res.writeHead(503);
+          res.end(JSON.stringify({ error: 'Reverse verification unavailable' }));
+          return;
         }
       } else if (!providerOrderId) {
         console.warn('[webhook:babylon] No providerOrderId found in payload — cannot reverse-verify');
@@ -907,11 +945,11 @@ const server = createServer(async (req, res) => {
       }
 
       if (error) {
+        console.error(`[webhook:babylon] Supabase RPC error: ${error.message}`);
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.writeHead(500);
         res.end(JSON.stringify({
           error: 'Erro ao aplicar webhook no Supabase',
-          message: error.message,
         }));
         return;
       }
@@ -924,7 +962,6 @@ const server = createServer(async (req, res) => {
       res.writeHead(400);
       res.end(JSON.stringify({
         error: 'Webhook inválido',
-        message: error?.message || 'Não foi possível processar payload JSON',
       }));
     }
     return;
@@ -1072,9 +1109,10 @@ const server = createServer(async (req, res) => {
       }
 
       if (error) {
+        console.error(`[webhook:amplopay] RPC error: ${error.message}`);
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.writeHead(500);
-        res.end(JSON.stringify({ error: 'Erro ao aplicar webhook AmploPay', message: error.message }));
+        res.end(JSON.stringify({ error: 'Erro ao aplicar webhook AmploPay' }));
         return;
       }
 
@@ -1084,7 +1122,7 @@ const server = createServer(async (req, res) => {
     } catch (err) {
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
       res.writeHead(400);
-      res.end(JSON.stringify({ error: 'Webhook inválido', message: err?.message || 'Payload JSON inválido' }));
+      res.end(JSON.stringify({ error: 'Webhook inválido' }));
     }
     return;
   }
@@ -1224,7 +1262,7 @@ const server = createServer(async (req, res) => {
       console.error(`[store-checkout-status] Error: ${error?.message}`);
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
       res.writeHead(500);
-      res.end(JSON.stringify({ error: 'Falha ao verificar status do checkout', message: error?.message }));
+      res.end(JSON.stringify({ error: 'Falha ao verificar status do checkout' }));
     }
     return;
   }
@@ -1291,7 +1329,7 @@ const server = createServer(async (req, res) => {
             gatewayStatus = normalizeAmploPayStatus(rawStatus);
             const approved = gatewayStatus === 'approved' || gatewayStatus === 'paid';
             if (approved) {
-              const buyerEmail = normalizeEmail(upstreamData?.client?.email || payerEmailParam || '');
+              const buyerEmail = normalizeEmail(upstreamData?.client?.email || '');
               const buyerPhone = String(upstreamData?.client?.phone || '').trim();
               const amountBrl = Number(upstreamData?.amount || 0);
               const amountCents = Math.round(amountBrl * 100);
@@ -1319,9 +1357,10 @@ const server = createServer(async (req, res) => {
               });
 
               if (fallbackError) {
+                console.error(`[checkout-status] AmploPay fallback RPC error: ${fallbackError.message}`);
                 res.setHeader('Content-Type', 'application/json; charset=utf-8');
                 res.writeHead(500);
-                res.end(JSON.stringify({ error: 'Falha ao registrar benefício via fallback de status', message: fallbackError.message }));
+                res.end(JSON.stringify({ error: 'Falha ao registrar benefício via fallback de status' }));
                 return;
               }
 
@@ -1394,7 +1433,6 @@ const server = createServer(async (req, res) => {
                 || upstreamData?.data?.metadata?.customer_email
                 || upstreamData?.payer?.email
                 || upstreamData?.data?.payer?.email
-                || payerEmailParam
                 || ''
               );
 
@@ -1454,11 +1492,11 @@ const server = createServer(async (req, res) => {
               });
 
               if (fallbackError) {
+                console.error(`[checkout-status] Babylon fallback RPC error: ${fallbackError.message}`);
                 res.setHeader('Content-Type', 'application/json; charset=utf-8');
                 res.writeHead(500);
                 res.end(JSON.stringify({
                   error: 'Falha ao registrar benefício via fallback de status',
-                  message: fallbackError.message,
                 }));
                 return;
               }
@@ -1516,13 +1554,21 @@ const server = createServer(async (req, res) => {
       res.writeHead(500);
       res.end(JSON.stringify({
         error: 'Falha ao consultar status do checkout',
-        message: error?.message || 'Erro desconhecido',
       }));
     }
     return;
   }
 
   if (req.url === '/api/public/first-offer/checkout' && req.method === 'POST') {
+    // Tighter rate limit for checkout creation
+    if (isCheckoutRateLimited(clientIp)) {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.setHeader('Retry-After', '60');
+      res.writeHead(429);
+      res.end(JSON.stringify({ error: 'Muitas tentativas de checkout. Aguarde um momento.' }));
+      return;
+    }
+
     try {
       const requestBody = await readRequestBody(req);
       const payload = parseJsonSafe(requestBody) || {};
@@ -1749,7 +1795,6 @@ const server = createServer(async (req, res) => {
       res.writeHead(500);
       res.end(JSON.stringify({
         error: 'Falha no checkout público',
-        message: error?.message || 'Erro desconhecido',
       }));
     }
     return;
@@ -1788,7 +1833,7 @@ const server = createServer(async (req, res) => {
       if (error) {
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.writeHead(500);
-        res.end(JSON.stringify({ error: 'Erro ao excluir usuário', message: error.message }));
+        res.end(JSON.stringify({ error: 'Erro ao excluir usuário' }));
         return;
       }
 
@@ -1798,7 +1843,7 @@ const server = createServer(async (req, res) => {
     } catch (err) {
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
       res.writeHead(500);
-      res.end(JSON.stringify({ error: 'Erro ao excluir usuário', message: err?.message || 'Erro desconhecido' }));
+      res.end(JSON.stringify({ error: 'Erro ao excluir usuário' }));
     }
     return;
   }
@@ -1859,7 +1904,7 @@ const server = createServer(async (req, res) => {
       if (error) {
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.writeHead(500);
-        res.end(JSON.stringify({ error: 'Erro ao atualizar saldo', message: error.message }));
+        res.end(JSON.stringify({ error: 'Erro ao atualizar saldo' }));
         return;
       }
 
@@ -1881,7 +1926,7 @@ const server = createServer(async (req, res) => {
     } catch (err) {
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
       res.writeHead(500);
-      res.end(JSON.stringify({ error: 'Erro ao atualizar saldo', message: err?.message || 'Erro desconhecido' }));
+      res.end(JSON.stringify({ error: 'Erro ao atualizar saldo' }));
     }
     return;
   }
@@ -1961,7 +2006,7 @@ const server = createServer(async (req, res) => {
     } catch (err) {
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
       res.writeHead(500);
-      res.end(JSON.stringify({ error: 'Erro ao alterar gateway', message: err?.message || 'Erro desconhecido' }));
+      res.end(JSON.stringify({ error: 'Erro ao alterar gateway' }));
     }
     return;
   }
@@ -1992,7 +2037,7 @@ const server = createServer(async (req, res) => {
     if (error) {
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
       res.writeHead(500);
-      res.end(JSON.stringify({ error: 'Erro ao listar convites', message: error.message }));
+      res.end(JSON.stringify({ error: 'Erro ao listar convites' }));
       return;
     }
 
@@ -2069,7 +2114,7 @@ const server = createServer(async (req, res) => {
     if (error) {
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
       res.writeHead(500);
-      res.end(JSON.stringify({ error: 'Erro ao criar convite', message: error.message }));
+      res.end(JSON.stringify({ error: 'Erro ao criar convite' }));
       return;
     }
 
@@ -2123,7 +2168,7 @@ const server = createServer(async (req, res) => {
     if (error) {
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
       res.writeHead(500);
-      res.end(JSON.stringify({ error: 'Erro ao revogar convite', message: error.message }));
+      res.end(JSON.stringify({ error: 'Erro ao revogar convite' }));
       return;
     }
 
@@ -2165,7 +2210,7 @@ const server = createServer(async (req, res) => {
     if (error) {
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
       res.writeHead(500);
-      res.end(JSON.stringify({ error: 'Erro ao resgatar convite', message: error.message }));
+      res.end(JSON.stringify({ error: 'Erro ao resgatar convite' }));
       return;
     }
 
@@ -2349,7 +2394,6 @@ const server = createServer(async (req, res) => {
         res.writeHead(500);
         res.end(JSON.stringify({
           error: 'Erro ao aplicar benefícios pendentes',
-          message: error.message,
         }));
         return;
       }
@@ -2380,7 +2424,6 @@ const server = createServer(async (req, res) => {
     res.writeHead(502);
     res.end(JSON.stringify({
       error: 'Falha ao comunicar com Banco Babylon',
-      message: error?.message || 'Erro desconhecido',
     }));
   }
 });

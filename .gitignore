@@ -16,6 +16,7 @@ dist-ssr
 !.env.example
 deploy/hostinger/backend.env.essencial
 deploy/hostinger/*.zip
+deploy/hostinger/upload_frontend_*/
 
 # Editor directories and files
 .vscode/*
