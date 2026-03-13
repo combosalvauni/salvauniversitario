@@ -117,6 +117,17 @@ export function createBabylonTransaction(payload) {
   });
 }
 
+export function checkCheckoutStatus(checkoutOrderId) {
+  return proxyRequest(`/checkout-status?checkoutOrderId=${encodeURIComponent(checkoutOrderId)}`, {
+    method: 'GET',
+    prefix: '/api/store',
+  });
+}
+
+export function checkStoreCheckoutStatus(checkoutOrderId) {
+  return checkCheckoutStatus(checkoutOrderId);
+}
+
 export function claimPendingCheckoutBenefits() {
   return babylonRequest('/claim-pending-benefits', {
     method: 'POST',
@@ -165,6 +176,33 @@ export function setAdminUserWalletBalance(userId, balance) {
   return proxyRequest(`/users/${userId}/wallet`, {
     method: 'PATCH',
     body: { balance },
+    prefix: '/api/admin',
+  });
+}
+
+export function getPaymentGateway() {
+  return proxyRequest('/payment-gateway', {
+    method: 'GET',
+    prefix: '/api/admin',
+  });
+}
+
+export async function getActiveGateway() {
+  try {
+    const data = await proxyRequest('/active-gateway', {
+      method: 'GET',
+      prefix: '/api/public',
+    });
+    return String(data?.activeGateway || 'babylon').toLowerCase();
+  } catch {
+    return 'babylon';
+  }
+}
+
+export function setPaymentGateway(gateway) {
+  return proxyRequest('/payment-gateway', {
+    method: 'PUT',
+    body: { gateway },
     prefix: '/api/admin',
   });
 }
