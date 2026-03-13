@@ -19,6 +19,30 @@ const requireApiAuth = isProduction
   ? true
   : String(process.env.BABYLON_PROXY_REQUIRE_AUTH || 'true').toLowerCase() !== 'false';
 const publicAppUrl = String(process.env.PUBLIC_APP_URL || '').trim().replace(/\/$/, '');
+
+// ── Payment gateway selection (mutable — toggled via admin API) ──
+let activeGateway = String(process.env.PAYMENT_GATEWAY || 'babylon').trim().toLowerCase();
+const AMPLOPAY_BASE_URL = 'https://app.amplopay.com/api/v1';
+const AMPLOPAY_PUBLIC_KEY = String(process.env.AMPLOPAY_PUBLIC_KEY || '').trim();
+const AMPLOPAY_SECRET_KEY = String(process.env.AMPLOPAY_SECRET_KEY || '').trim();
+const AMPLOPAY_WEBHOOK_TOKEN = String(process.env.AMPLOPAY_WEBHOOK_TOKEN || '').trim();
+let isAmploPay = activeGateway === 'amplopay';
+
+const babylonWebhookCallbackUrl = (() => {
+  const directUrl = String(process.env.BABYLON_WEBHOOK_CALLBACK_URL || '').trim();
+  if (directUrl) return directUrl;
+  if (!publicAppUrl) return null;
+  const apiBase = publicAppUrl.replace(/^https?:\/\/(?:www\.|app\.)?/, 'https://api.');
+  return `${apiBase}/webhooks/babylon`;
+})();
+
+const amploPayWebhookCallbackUrl = (() => {
+  const directUrl = String(process.env.AMPLOPAY_WEBHOOK_CALLBACK_URL || '').trim();
+  if (directUrl) return directUrl;
+  if (!publicAppUrl) return null;
+  const apiBase = publicAppUrl.replace(/^https?:\/\/(?:www\.|app\.)?/, 'https://api.');
+  return `${apiBase}/webhooks/amplopay`;
+})();
 const allowedOrigins = new Set(
   String(
     process.env.BABYLON_ALLOWED_ORIGINS
@@ -200,6 +224,83 @@ function isFailurePaymentStatus(status) {
   return ['refused', 'failed', 'canceled', 'cancelled', 'denied', 'error', 'voided', 'expired'].includes(normalized);
 }
 
+// ── AmploPay helpers ──
+function amploPayHeaders() {
+  return {
+    'x-public-key': AMPLOPAY_PUBLIC_KEY,
+    'x-secret-key': AMPLOPAY_SECRET_KEY,
+    'Content-Type': 'application/json',
+    'User-Agent': 'ConcursaFlix-Backend/1.0',
+  };
+}
+
+function isAmploPayConfigured() {
+  return Boolean(AMPLOPAY_PUBLIC_KEY && AMPLOPAY_SECRET_KEY);
+}
+
+function normalizeAmploPayStatus(status) {
+  const s = String(status || '').trim().toUpperCase();
+  if (s === 'COMPLETED' || s === 'OK') return 'approved';
+  if (s === 'PENDING') return 'pending';
+  if (s === 'FAILED' || s === 'REJECTED' || s === 'CANCELED') return 'failed';
+  if (s === 'REFUNDED' || s === 'CHARGED_BACK') return 'refunded';
+  return s.toLowerCase();
+}
+
+function isAmploPayApprovedEvent(event) {
+  const e = String(event || '').trim().toUpperCase();
+  return e === 'TRANSACTION_PAID';
+}
+
+function isAmploPayFailureEvent(event) {
+  const e = String(event || '').trim().toUpperCase();
+  return ['TRANSACTION_CANCELED', 'TRANSACTION_REFUNDED'].includes(e);
+}
+
+async function createAmploPayPix({ identifier, amount, amountBrl, client, products, callbackUrl, metadata }) {
+  const resolvedAmount = amount ?? amountBrl ?? 0;
+  const body = {
+    identifier,
+    amount: resolvedAmount,
+    client: {
+      name: client.name || 'Cliente',
+      email: client.email,
+      phone: client.phone || '',
+      document: client.document || client.cpf || '',
+    },
+    ...(products && products.length > 0 ? {
+      products: products.map((p, idx) => ({
+        id: p.id || `item_${idx + 1}`,
+        name: p.name || p.title || 'Produto',
+        quantity: p.quantity || 1,
+        price: p.price || p.unitPrice || 0,
+      })),
+    } : {}),
+    ...(callbackUrl ? { callbackUrl } : {}),
+    ...(metadata ? { metadata } : {}),
+  };
+
+  const response = await fetch(`${AMPLOPAY_BASE_URL}/gateway/pix/receive`, {
+    method: 'POST',
+    headers: amploPayHeaders(),
+    body: JSON.stringify(body),
+  });
+
+  const text = await response.text();
+  let data;
+  try { data = JSON.parse(text); } catch { data = text; }
+  return { ok: response.ok, status: response.status, data };
+}
+
+async function fetchAmploPayTransaction(transactionId) {
+  const url = `${AMPLOPAY_BASE_URL}/gateway/transactions?id=${encodeURIComponent(transactionId)}`;
+  const response = await fetch(url, { method: 'GET', headers: amploPayHeaders() });
+  const text = await response.text();
+  let data;
+  try { data = JSON.parse(text); } catch { data = text; }
+  return { ok: response.ok, status: response.status, data };
+}
+
 function sanitizeOfferLabel(value) {
   return String(value || '')
     .replace(/\s+/g, ' ')
@@ -246,6 +347,12 @@ function looksLikeQrImage(value) {
 
 function collectCheckoutArtifacts(responseData) {
   const candidatesPixCode = [
+    responseData?.pix?.qrCode,
+    responseData?.pix?.qrcode,
+    responseData?.data?.pix?.qrCode,
+    responseData?.data?.pix?.qrcode,
+    responseData?.pixInformation?.qrCode,
+    responseData?.transaction?.pixInformation?.qrCode,
     responseData?.pix?.copyAndPaste,
     responseData?.pix?.copy_paste,
     responseData?.pix?.copyPaste,
@@ -304,17 +411,31 @@ function isTransactionCreatePath(pathname) {
 function ensureRequiredConfiguration(options = {}) {
   const requiresSupabase = options?.requiresSupabase !== false;
   const requiresWebhookToken = options?.requiresWebhookToken === true;
-  const requiresBabylonAuth = options?.requiresBabylonAuth !== false;
+  const requiresGatewayAuth = options?.requiresBabylonAuth !== false;
   const requiresPublicAppUrl = options?.requiresPublicAppUrl === true;
   const issues = [];
-  const hasAuthHeader = Boolean(getAuthHeader());
 
-  if (requiresBabylonAuth && !hasAuthHeader) {
-    issues.push('Defina BABYLON_SECRET_KEY e BABYLON_COMPANY_ID.');
+  if (requiresGatewayAuth) {
+    if (isAmploPay) {
+      if (!isAmploPayConfigured()) {
+        issues.push('Defina AMPLOPAY_PUBLIC_KEY e AMPLOPAY_SECRET_KEY para uso do gateway AmploPay.');
+      }
+    } else {
+      const hasAuthHeader = Boolean(getAuthHeader());
+      if (!hasAuthHeader) {
+        issues.push('Defina BABYLON_SECRET_KEY e BABYLON_COMPANY_ID.');
+      }
+    }
   }
 
-  if (requiresWebhookToken && !process.env.BABYLON_WEBHOOK_TOKEN) {
-    issues.push('Defina BABYLON_WEBHOOK_TOKEN para validar o webhook.');
+  if (requiresWebhookToken) {
+    if (isAmploPay) {
+      if (!AMPLOPAY_WEBHOOK_TOKEN) {
+        issues.push('Defina AMPLOPAY_WEBHOOK_TOKEN para validar o webhook AmploPay.');
+      }
+    } else if (!process.env.BABYLON_WEBHOOK_TOKEN) {
+      issues.push('Defina BABYLON_WEBHOOK_TOKEN para validar o webhook.');
+    }
   }
 
   if (requiresSupabase && !supabaseAdmin) {
@@ -377,22 +498,40 @@ const server = createServer(async (req, res) => {
     const supabaseConfigured = Boolean(supabaseAdmin);
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     res.writeHead(200);
-    res.end(JSON.stringify({
-      ok: true,
-      status: configured && supabaseConfigured ? 'healthy' : 'degraded',
-    }));
+    // In production, only expose minimal health info — no infrastructure details
+    if (isProduction) {
+      const healthy = (isAmploPay ? isAmploPayConfigured() : configured) && supabaseConfigured;
+      res.end(JSON.stringify({ ok: true, status: healthy ? 'healthy' : 'degraded' }));
+    } else {
+      const webhookTokenConfigured = Boolean(process.env.BABYLON_WEBHOOK_TOKEN);
+      const amploPayConfigured = isAmploPayConfigured();
+      res.end(JSON.stringify({
+        ok: true,
+        activeGateway,
+        configured: isAmploPay ? amploPayConfigured : configured,
+        supabaseConfigured,
+        webhookTokenConfigured: isAmploPay ? Boolean(AMPLOPAY_WEBHOOK_TOKEN) : webhookTokenConfigured,
+        babylonConfigured: configured,
+        amploPayConfigured,
+        status: (isAmploPay ? amploPayConfigured : configured) && supabaseConfigured ? 'healthy' : 'degraded',
+      }));
+    }
     return;
   }
 
   const requestUrl = new URL(req.url || '/', 'http://localhost');
   const pathname = requestUrl.pathname;
   const needsSupabase = pathname === '/webhooks/babylon'
+    || pathname === '/webhooks/amplopay'
+    || pathname === '/api/store/checkout-status'
     || pathname.startsWith('/api/public/first-offer/checkout-status')
     || pathname.startsWith('/api/admin/invite-links')
     || pathname.startsWith('/api/admin/users')
+    || pathname.startsWith('/api/admin/payment-gateway')
     || pathname.startsWith('/api/babylon');
   const needsBabylonAuth = pathname === '/webhooks/babylon'
     || pathname.startsWith('/api/public/first-offer/checkout')
+    || pathname === '/api/store/checkout-status'
     || pathname.startsWith('/api/babylon');
   const needsWebhookToken = pathname === '/webhooks/babylon'
     && (isProduction || Boolean(process.env.BABYLON_WEBHOOK_TOKEN));
@@ -416,8 +555,17 @@ const server = createServer(async (req, res) => {
 
   if (pathname === '/webhooks/babylon' && req.method === 'POST') {
     const expectedToken = process.env.BABYLON_WEBHOOK_TOKEN;
+    if (!expectedToken) {
+      console.error('[webhook:babylon] BABYLON_WEBHOOK_TOKEN not configured — rejecting webhook for security');
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.writeHead(500);
+      res.end(JSON.stringify({ error: 'Webhook token not configured on server' }));
+      return;
+    }
+
     const receivedToken = req.headers['x-babylon-webhook-token'];
-    if (receivedToken !== expectedToken) {
+    if (!receivedToken || receivedToken !== expectedToken) {
+      console.error(`[webhook:babylon] TOKEN MISMATCH — received: "${String(receivedToken || '').slice(0, 12)}..." expected: "${String(expectedToken || '').slice(0, 12)}..." | IP: ${req.socket?.remoteAddress || 'unknown'} | UA: ${req.headers['user-agent'] || 'unknown'}`);
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
       res.writeHead(401);
       res.end(JSON.stringify({ error: 'Unauthorized webhook token' }));
@@ -425,6 +573,7 @@ const server = createServer(async (req, res) => {
     }
 
     try {
+      console.log(`[webhook:babylon] Received valid webhook from ${req.socket?.remoteAddress || 'unknown'}`);
       const rawBody = await readRequestBody(req);
       const textBody = rawBody.toString('utf8') || '{}';
       const payload = textBody ? JSON.parse(textBody) : {};
@@ -656,6 +805,291 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  // ── AmploPay webhook ──
+  if (pathname === '/webhooks/amplopay' && req.method === 'POST') {
+    try {
+      const rawBody = await readRequestBody(req);
+      const textBody = rawBody.toString('utf8') || '{}';
+      const payload = textBody ? JSON.parse(textBody) : {};
+
+      // Validate webhook token (REQUIRED in production, strongly recommended in dev)
+      if (!AMPLOPAY_WEBHOOK_TOKEN) {
+        console.error('[webhook:amplopay] AMPLOPAY_WEBHOOK_TOKEN not configured — rejecting webhook for security');
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.writeHead(500);
+        res.end(JSON.stringify({ error: 'Webhook token not configured on server' }));
+        return;
+      }
+
+      const receivedToken = String(payload?.token || '').trim();
+      if (!receivedToken || receivedToken !== AMPLOPAY_WEBHOOK_TOKEN) {
+        console.error(`[webhook:amplopay] TOKEN MISMATCH — received: "${String(receivedToken || '').slice(0, 12)}..." | IP: ${req.socket?.remoteAddress || 'unknown'}`);
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.writeHead(401);
+        res.end(JSON.stringify({ error: 'Unauthorized webhook token' }));
+        return;
+      }
+
+      const event = String(payload?.event || '').trim();
+      const providerName = 'amplopay';
+      const transactionId = String(payload?.transaction?.id || '').trim();
+      const transactionIdentifier = String(payload?.transaction?.identifier || '').trim();
+      const clientEmail = normalizeEmail(payload?.client?.email || '');
+      const clientPhone = String(payload?.client?.phone || '').trim();
+      const amountBrl = Number(payload?.transaction?.amount || 0);
+      const amountCents = Math.round(amountBrl * 100);
+
+      const checkoutOrderIdRaw = transactionIdentifier;
+      const checkoutOrderId = UUID_REGEX.test(checkoutOrderIdRaw) ? checkoutOrderIdRaw : null;
+
+      const fallbackEventHash = createHash('sha256').update(textBody).digest('hex');
+      const eventId = transactionId || `amplopay_${fallbackEventHash}`;
+
+      // Map AmploPay event to generic event type
+      let eventType;
+      if (isAmploPayApprovedEvent(event)) {
+        eventType = 'payment.approved';
+      } else if (isAmploPayFailureEvent(event)) {
+        eventType = event === 'TRANSACTION_CANCELED' ? 'canceled' : 'refunded';
+      } else {
+        eventType = event || 'unknown';
+      }
+
+      // Route through the same Supabase logic as Babylon
+      const checkoutSource = (() => {
+        const metaSource = String(payload?.transaction?.metadata?.source || '').trim().toLowerCase();
+        if (metaSource) return metaSource;
+        if (checkoutOrderId) {
+          // Will be resolved below
+          return '';
+        }
+        return 'first_offer_public_checkout';
+      })();
+
+      let resolvedSource = checkoutSource;
+      if (!resolvedSource && checkoutOrderId) {
+        const { data: orderData } = await supabaseAdmin
+          .from('checkout_orders')
+          .select('metadata')
+          .eq('id', checkoutOrderId)
+          .maybeSingle();
+        resolvedSource = String(orderData?.metadata?.source || '').trim().toLowerCase();
+      }
+
+      let data;
+      let error;
+
+      if (resolvedSource === 'wallet_topup') {
+        const result = await supabaseAdmin.rpc('apply_checkout_paid_event', {
+          p_provider_name: providerName,
+          p_provider_event_id: eventId,
+          p_provider_order_id: transactionId || null,
+          p_event_type: eventType,
+          p_payload: payload,
+        });
+        data = result.data;
+        error = result.error;
+      } else if (resolvedSource === 'first_offer_public_checkout' || !resolvedSource) {
+        if (!isAmploPayApprovedEvent(event)) {
+          data = { status: 'ignored_event_type', event_type: event };
+          error = null;
+        } else {
+          const creditAmount = resolveCreditAmountFromCents(amountCents);
+          const result = await supabaseAdmin.rpc('register_pending_checkout_benefit', {
+            p_provider_name: providerName,
+            p_provider_event_id: eventId,
+            p_provider_order_id: transactionId || null,
+            p_checkout_order_id: checkoutOrderId || transactionIdentifier || null,
+            p_payer_email: clientEmail,
+            p_payer_phone: clientPhone || null,
+            p_amount_cents: amountCents,
+            p_credit_amount: creditAmount,
+            p_activate_store: true,
+            p_metadata: payload,
+          });
+          data = result.data;
+          error = result.error;
+
+          if (!error && data?.profile_id) {
+            try {
+              await supabaseAdmin.rpc('apply_pending_checkout_benefits_for_profile', {
+                p_profile_id: data.profile_id,
+                p_email: clientEmail || null,
+              });
+            } catch (_autoApplyErr) { /* will be applied on login */ }
+          }
+        }
+      } else {
+        const result = await supabaseAdmin.rpc('apply_checkout_paid_and_grant_access', {
+          p_provider_name: providerName,
+          p_provider_event_id: eventId,
+          p_provider_order_id: transactionId || null,
+          p_checkout_order_id: checkoutOrderId,
+          p_event_type: eventType,
+          p_payload: payload,
+        });
+        data = result.data;
+        error = result.error;
+      }
+
+      if (error) {
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.writeHead(500);
+        res.end(JSON.stringify({ error: 'Erro ao aplicar webhook AmploPay', message: error.message }));
+        return;
+      }
+
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.writeHead(200);
+      res.end(JSON.stringify({ ok: true, result: data }));
+    } catch (err) {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.writeHead(400);
+      res.end(JSON.stringify({ error: 'Webhook inválido', message: err?.message || 'Payload JSON inválido' }));
+    }
+    return;
+  }
+
+  // ── Authenticated checkout status poll (store access and wallet top-up) ──
+  if (pathname === '/api/store/checkout-status' && req.method === 'GET') {
+    try {
+      const authResult = await authenticateRequestUser(req);
+      if (!authResult.user) {
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.writeHead(authResult.status);
+        res.end(JSON.stringify({ error: authResult.error }));
+        return;
+      }
+
+      const storeRequestUrl = new URL(req.url, 'http://localhost');
+      const checkoutOrderId = String(storeRequestUrl.searchParams.get('checkoutOrderId') || '').trim();
+
+      if (!checkoutOrderId || !UUID_REGEX.test(checkoutOrderId)) {
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.writeHead(400);
+        res.end(JSON.stringify({ error: 'Informe checkoutOrderId válido' }));
+        return;
+      }
+
+      // Fetch order and validate ownership
+      const { data: orderData, error: orderError } = await supabaseAdmin
+        .from('checkout_orders')
+        .select('id, status, provider_order_id, provider_name, metadata')
+        .eq('id', checkoutOrderId)
+        .eq('profile_id', authResult.user.id)
+        .maybeSingle();
+
+      if (orderError || !orderData?.id) {
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.writeHead(404);
+        res.end(JSON.stringify({ error: 'Pedido não encontrado' }));
+        return;
+      }
+
+      // Already paid or failed — return immediately
+      const currentStatus = String(orderData.status || 'pending').toLowerCase();
+      if (currentStatus === 'paid' || currentStatus === 'failed' || currentStatus === 'canceled') {
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.writeHead(200);
+        res.end(JSON.stringify({ ok: true, status: currentStatus, matchedBy: 'order_status' }));
+        return;
+      }
+
+      const providerOrderId = String(orderData.provider_order_id || '').trim();
+      const providerName = String(orderData.provider_name || '').trim().toLowerCase();
+      const checkoutSource = String(orderData?.metadata?.source || '').trim().toLowerCase();
+      let gatewayStatus = null;
+      let paymentApplied = false;
+
+      if (providerOrderId) {
+        let approved = false;
+        let failed = false;
+        let eventType = 'payment.approved';
+
+        if (providerName === 'amplopay') {
+          const ampResult = await fetchAmploPayTransaction(providerOrderId);
+          if (ampResult.ok && ampResult.data) {
+            gatewayStatus = normalizeAmploPayStatus(String(ampResult.data?.status || ''));
+            approved = gatewayStatus === 'approved' || gatewayStatus === 'paid';
+            failed = isFailurePaymentStatus(gatewayStatus);
+          }
+        } else {
+          const upstreamResponse = await fetch(`${baseUrl}/transactions/${encodeURIComponent(providerOrderId)}`, {
+            method: 'GET',
+            headers: { Authorization: getAuthHeader(), 'Content-Type': 'application/json' },
+          });
+          if (upstreamResponse.ok) {
+            const upstreamText = await upstreamResponse.text();
+            let upstreamData;
+            try { upstreamData = upstreamText ? JSON.parse(upstreamText) : {}; } catch { upstreamData = {}; }
+            gatewayStatus = String(upstreamData?.status || upstreamData?.data?.status || '').toLowerCase() || null;
+            approved = isApprovedPaymentEvent(gatewayStatus);
+            failed = isFailurePaymentStatus(gatewayStatus);
+          }
+        }
+
+        if (approved) {
+          const pollEventId = `store_status_poll_${providerOrderId}_${Date.now()}`;
+          const rpcResult = checkoutSource === 'wallet_topup'
+            ? await supabaseAdmin.rpc('apply_checkout_paid_event', {
+              p_provider_name: providerName || 'banco_babylon',
+              p_provider_event_id: pollEventId,
+              p_provider_order_id: providerOrderId,
+              p_event_type: eventType,
+              p_payload: { source: 'store_status_poll', checkout_source: checkoutSource, gateway_status: gatewayStatus },
+            })
+            : await supabaseAdmin.rpc('apply_checkout_paid_and_grant_access', {
+              p_provider_name: providerName || 'banco_babylon',
+              p_provider_event_id: pollEventId,
+              p_provider_order_id: providerOrderId,
+              p_checkout_order_id: checkoutOrderId,
+              p_event_type: eventType,
+              p_payload: { source: 'store_status_poll', checkout_source: checkoutSource, gateway_status: gatewayStatus },
+            });
+
+          if (!rpcResult.error) {
+            const rpcStatus = String(rpcResult.data?.status || '').toLowerCase();
+            if (
+              rpcStatus === 'paid_and_access_granted'
+              || rpcStatus === 'paid_applied'
+              || rpcStatus === 'already_paid'
+              || rpcStatus === 'duplicate_event'
+            ) {
+              paymentApplied = true;
+              console.log(`[store-checkout-status] Checkout applied via poll for order ${checkoutOrderId} (${checkoutSource || 'store'})`);
+            }
+          } else {
+            console.error(`[store-checkout-status] RPC error for order ${checkoutOrderId}: ${rpcResult.error.message}`);
+          }
+        } else if (failed) {
+          await supabaseAdmin
+            .from('checkout_orders')
+            .update({ status: 'failed' })
+            .eq('id', checkoutOrderId)
+            .eq('status', 'pending');
+        }
+      }
+
+      const finalStatus = paymentApplied ? 'paid' : (gatewayStatus && isFailurePaymentStatus(gatewayStatus) ? 'failed' : 'pending');
+
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.writeHead(200);
+      res.end(JSON.stringify({
+        ok: true,
+        status: finalStatus,
+        gatewayStatus,
+        checkoutSource,
+        paymentApplied,
+      }));
+    } catch (error) {
+      console.error(`[store-checkout-status] Error: ${error?.message}`);
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.writeHead(500);
+      res.end(JSON.stringify({ error: 'Falha ao verificar status do checkout', message: error?.message }));
+    }
+    return;
+  }
+
   if (req.url?.startsWith('/api/public/first-offer/checkout-status') && req.method === 'GET') {
     try {
       const requestUrl = new URL(req.url, 'http://localhost');
@@ -705,132 +1139,197 @@ const server = createServer(async (req, res) => {
       let gatewayStatus = null;
 
       if (status !== 'paid' && providerOrderId) {
-        const upstreamResponse = await fetch(`${baseUrl}/transactions/${encodeURIComponent(providerOrderId)}`, {
-          method: 'GET',
-          headers: {
-            Authorization: getAuthHeader(),
-            'Content-Type': 'application/json',
-          },
-        });
+        let upstreamData = null;
+        let upstreamOk = false;
 
-        const upstreamText = await upstreamResponse.text();
-        let upstreamData = upstreamText;
-        try {
-          upstreamData = upstreamText ? JSON.parse(upstreamText) : {};
-        } catch {
-          upstreamData = upstreamText;
-        }
+        if (isAmploPay) {
+          // ── AmploPay status poll ──
+          const ampResult = await fetchAmploPayTransaction(providerOrderId);
+          upstreamOk = ampResult.ok;
+          upstreamData = ampResult.data;
+          if (upstreamOk && upstreamData) {
+            const rawStatus = String(upstreamData?.status || '').toUpperCase();
+            gatewayStatus = normalizeAmploPayStatus(rawStatus);
+            const approved = gatewayStatus === 'approved' || gatewayStatus === 'paid';
+            if (approved) {
+              const buyerEmail = normalizeEmail(upstreamData?.client?.email || payerEmailParam || '');
+              const buyerPhone = String(upstreamData?.client?.phone || '').trim();
+              const amountBrl = Number(upstreamData?.amount || 0);
+              const amountCents = Math.round(amountBrl * 100);
+              const creditAmount = resolveCreditAmountFromCents(amountCents);
 
-        if (upstreamResponse.ok) {
-          gatewayStatus = String(
-            upstreamData?.status
-            || upstreamData?.data?.status
-            || upstreamData?.transaction?.status
-            || ''
-          ).trim().toLowerCase() || null;
+              const resolvedCheckoutOrderIdRaw = String(
+                checkoutOrderId || upstreamData?.clientIdentifier || upstreamData?.metadata?.checkout_order_id || ''
+              ).trim();
+              const resolvedCheckoutOrderId = UUID_REGEX.test(resolvedCheckoutOrderIdRaw) ? resolvedCheckoutOrderIdRaw : null;
 
-          const approved = isApprovedPaymentEvent(gatewayStatus);
+              const fallbackEventHash = createHash('sha256').update(JSON.stringify(upstreamData || {})).digest('hex').slice(0, 24);
+              const fallbackEventId = `status_poll_${providerOrderId}_${fallbackEventHash}`;
 
-          if (approved) {
-            const buyerEmail = normalizeEmail(
-              upstreamData?.customer?.email
-              || upstreamData?.data?.customer?.email
-              || upstreamData?.buyer?.email
-              || upstreamData?.data?.buyer?.email
-              || upstreamData?.metadata?.customer_email
-              || upstreamData?.data?.metadata?.customer_email
-              || upstreamData?.payer?.email
-              || upstreamData?.data?.payer?.email
-              || payerEmailParam
-              || ''
-            );
+              const { data: fallbackData, error: fallbackError } = await supabaseAdmin.rpc('register_pending_checkout_benefit', {
+                p_provider_name: 'amplopay',
+                p_provider_event_id: fallbackEventId,
+                p_provider_order_id: providerOrderId,
+                p_checkout_order_id: resolvedCheckoutOrderId || resolvedCheckoutOrderIdRaw || null,
+                p_payer_email: buyerEmail,
+                p_payer_phone: buyerPhone || null,
+                p_amount_cents: amountCents,
+                p_credit_amount: creditAmount,
+                p_activate_store: true,
+                p_metadata: { source: 'checkout_status_poll_fallback', gateway_status: gatewayStatus, transaction: upstreamData },
+              });
 
-            const buyerPhone = String(
-              upstreamData?.customer?.phone
-              || upstreamData?.data?.customer?.phone
-              || upstreamData?.buyer?.phone
-              || upstreamData?.data?.buyer?.phone
-              || ''
-            ).trim();
+              if (fallbackError) {
+                res.setHeader('Content-Type', 'application/json; charset=utf-8');
+                res.writeHead(500);
+                res.end(JSON.stringify({ error: 'Falha ao registrar benefício via fallback de status', message: fallbackError.message }));
+                return;
+              }
 
-            const amountCents = [
-              upstreamData?.amount_cents,
-              upstreamData?.data?.amount_cents,
-              upstreamData?.amount,
-              upstreamData?.data?.amount,
-              upstreamData?.paid_amount_cents,
-              upstreamData?.data?.paid_amount_cents,
-            ]
-              .map((value) => resolveAmountCents(value))
-              .find((value) => value > 0) || 0;
-            const creditAmount = resolveCreditAmountFromCents(amountCents);
-
-            const resolvedCheckoutOrderIdRaw = String(
-              checkoutOrderId
-              || upstreamData?.external_id
-              || upstreamData?.data?.external_id
-              || upstreamData?.metadata?.checkout_order_id
-              || upstreamData?.data?.metadata?.checkout_order_id
-              || ''
-            ).trim();
-            const resolvedCheckoutOrderId = UUID_REGEX.test(resolvedCheckoutOrderIdRaw)
-              ? resolvedCheckoutOrderIdRaw
-              : null;
-
-            const fallbackEventHash = createHash('sha256')
-              .update(JSON.stringify(upstreamData || {}))
-              .digest('hex')
-              .slice(0, 24);
-            const fallbackEventId = `status_poll_${providerOrderId}_${fallbackEventHash}`;
-
-            const { data: fallbackData, error: fallbackError } = await supabaseAdmin.rpc('register_pending_checkout_benefit', {
-              p_provider_name: 'banco_babylon',
-              p_provider_event_id: fallbackEventId,
-              p_provider_order_id: providerOrderId,
-              p_checkout_order_id: resolvedCheckoutOrderId || resolvedCheckoutOrderIdRaw || null,
-              p_payer_email: buyerEmail,
-              p_payer_phone: buyerPhone || null,
-              p_amount_cents: amountCents,
-              p_credit_amount: creditAmount,
-              p_activate_store: true,
-              p_metadata: {
-                source: 'checkout_status_poll_fallback',
-                gateway_status: gatewayStatus,
-                transaction: upstreamData,
-              },
-            });
-
-            if (fallbackError) {
-              res.setHeader('Content-Type', 'application/json; charset=utf-8');
-              res.writeHead(500);
-              res.end(JSON.stringify({
-                error: 'Falha ao registrar benefício via fallback de status',
-                message: fallbackError.message,
-              }));
-              return;
-            }
-
-            const fallbackStatus = String(fallbackData?.status || '').toLowerCase();
-            if (fallbackStatus === 'pending_registered') {
-              status = 'paid';
-              matchedBy = 'provider_status_poll';
-              fallbackApplied = true;
-
-              // Auto-apply: se o perfil já existe, aplica benefícios imediatamente
-              if (fallbackData?.profile_id) {
-                try {
-                  await supabaseAdmin.rpc('apply_pending_checkout_benefits_for_profile', {
-                    p_profile_id: fallbackData.profile_id,
-                    p_email: buyerEmail || null,
-                  });
-                } catch (_autoApplyErr) {
-                  // Não bloqueia o status poll se auto-apply falhar
+              const fallbackStatus = String(fallbackData?.status || '').toLowerCase();
+              if (fallbackStatus === 'pending_registered') {
+                status = 'paid';
+                matchedBy = 'provider_status_poll';
+                fallbackApplied = true;
+                if (fallbackData?.profile_id) {
+                  try {
+                    await supabaseAdmin.rpc('apply_pending_checkout_benefits_for_profile', { p_profile_id: fallbackData.profile_id, p_email: buyerEmail || null });
+                  } catch (_autoApplyErr) { /* will be applied on login */ }
                 }
               }
+            } else if (gatewayStatus && (gatewayStatus === 'failed' || gatewayStatus === 'refused')) {
+              status = 'failed';
+              matchedBy = 'provider_status_poll';
             }
-          } else if (gatewayStatus && isFailurePaymentStatus(gatewayStatus)) {
-            status = 'failed';
-            matchedBy = 'provider_status_poll';
+          }
+        } else {
+          // ── Babylon status poll ──
+          const upstreamResponse = await fetch(`${baseUrl}/transactions/${encodeURIComponent(providerOrderId)}`, {
+            method: 'GET',
+            headers: {
+              Authorization: getAuthHeader(),
+              'Content-Type': 'application/json',
+            },
+          });
+
+          const upstreamText = await upstreamResponse.text();
+          try {
+            upstreamData = upstreamText ? JSON.parse(upstreamText) : {};
+          } catch {
+            upstreamData = upstreamText;
+          }
+          upstreamOk = upstreamResponse.ok;
+
+          if (upstreamOk) {
+            gatewayStatus = String(
+              upstreamData?.status
+              || upstreamData?.data?.status
+              || upstreamData?.transaction?.status
+              || ''
+            ).trim().toLowerCase() || null;
+
+            const approved = isApprovedPaymentEvent(gatewayStatus);
+
+            if (approved) {
+              const buyerEmail = normalizeEmail(
+                upstreamData?.customer?.email
+                || upstreamData?.data?.customer?.email
+                || upstreamData?.buyer?.email
+                || upstreamData?.data?.buyer?.email
+                || upstreamData?.metadata?.customer_email
+                || upstreamData?.data?.metadata?.customer_email
+                || upstreamData?.payer?.email
+                || upstreamData?.data?.payer?.email
+                || payerEmailParam
+                || ''
+              );
+
+              const buyerPhone = String(
+                upstreamData?.customer?.phone
+                || upstreamData?.data?.customer?.phone
+                || upstreamData?.buyer?.phone
+                || upstreamData?.data?.buyer?.phone
+                || ''
+              ).trim();
+
+              const amountCents = [
+                upstreamData?.amount_cents,
+                upstreamData?.data?.amount_cents,
+                upstreamData?.amount,
+                upstreamData?.data?.amount,
+                upstreamData?.paid_amount_cents,
+                upstreamData?.data?.paid_amount_cents,
+              ]
+                .map((value) => resolveAmountCents(value))
+                .find((value) => value > 0) || 0;
+              const creditAmount = resolveCreditAmountFromCents(amountCents);
+
+              const resolvedCheckoutOrderIdRaw = String(
+                checkoutOrderId
+                || upstreamData?.external_id
+                || upstreamData?.data?.external_id
+                || upstreamData?.metadata?.checkout_order_id
+                || upstreamData?.data?.metadata?.checkout_order_id
+                || ''
+              ).trim();
+              const resolvedCheckoutOrderId = UUID_REGEX.test(resolvedCheckoutOrderIdRaw)
+                ? resolvedCheckoutOrderIdRaw
+                : null;
+
+              const fallbackEventHash = createHash('sha256')
+                .update(JSON.stringify(upstreamData || {}))
+                .digest('hex')
+                .slice(0, 24);
+              const fallbackEventId = `status_poll_${providerOrderId}_${fallbackEventHash}`;
+
+              const { data: fallbackData, error: fallbackError } = await supabaseAdmin.rpc('register_pending_checkout_benefit', {
+                p_provider_name: 'banco_babylon',
+                p_provider_event_id: fallbackEventId,
+                p_provider_order_id: providerOrderId,
+                p_checkout_order_id: resolvedCheckoutOrderId || resolvedCheckoutOrderIdRaw || null,
+                p_payer_email: buyerEmail,
+                p_payer_phone: buyerPhone || null,
+                p_amount_cents: amountCents,
+                p_credit_amount: creditAmount,
+                p_activate_store: true,
+                p_metadata: {
+                  source: 'checkout_status_poll_fallback',
+                  gateway_status: gatewayStatus,
+                  transaction: upstreamData,
+                },
+              });
+
+              if (fallbackError) {
+                res.setHeader('Content-Type', 'application/json; charset=utf-8');
+                res.writeHead(500);
+                res.end(JSON.stringify({
+                  error: 'Falha ao registrar benefício via fallback de status',
+                  message: fallbackError.message,
+                }));
+                return;
+              }
+
+              const fallbackStatus = String(fallbackData?.status || '').toLowerCase();
+              if (fallbackStatus === 'pending_registered') {
+                status = 'paid';
+                matchedBy = 'provider_status_poll';
+                fallbackApplied = true;
+
+                if (fallbackData?.profile_id) {
+                  try {
+                    await supabaseAdmin.rpc('apply_pending_checkout_benefits_for_profile', {
+                      p_profile_id: fallbackData.profile_id,
+                      p_email: buyerEmail || null,
+                    });
+                  } catch (_autoApplyErr) {
+                    // Não bloqueia o status poll se auto-apply falhar
+                  }
+                }
+              }
+            } else if (gatewayStatus && isFailurePaymentStatus(gatewayStatus)) {
+              status = 'failed';
+              matchedBy = 'provider_status_poll';
+            }
           }
         }
       }
@@ -936,74 +1435,133 @@ const server = createServer(async (req, res) => {
 
       const checkoutOrderId = randomUUID();
       const idempotencyKey = `first_offer_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
-      const gatewayPayload = {
-        amount: Math.round(amountCents),
-        currency: 'BRL',
-        payment_method: 'PIX',
-        paymentMethod: 'PIX',
-        customer: {
-          name,
-          email,
-          phone: phoneDigits.length >= 10 ? phoneDigits.slice(0, 11) : '11999999999',
-          document: {
-            type: 'CPF',
-            number: normalizeDigits(payload?.customer?.cpf || payload?.customer?.document || '').slice(0, 11) || generateValidCpf(),
+
+      let upstreamData;
+      let upstreamOk;
+      let upstreamStatus;
+
+      if (isAmploPay) {
+        // ── AmploPay PIX ──
+        const amountBrl = Math.round(amountCents) / 100;
+        const cpf = normalizeDigits(payload?.customer?.cpf || payload?.customer?.document || '').slice(0, 11);
+        const phone = phoneDigits.length >= 10 ? phoneDigits.slice(0, 11) : '';
+
+        const amploPayload = {
+          identifier: checkoutOrderId,
+          amount: amountBrl,
+          client: {
+            name,
+            email,
+            ...(phone ? { phone } : {}),
+            ...(cpf ? { document: cpf } : {}),
           },
-        },
-        items: validatedItems.map((item) => ({
-          title: item.title,
-          unitPrice: Math.round(item.unitPriceCents),
-          quantity: item.quantity,
+          ...(amploPayWebhookCallbackUrl ? { callbackUrl: amploPayWebhookCallbackUrl } : {}),
+          metadata: {
+            checkout_order_id: checkoutOrderId,
+            source: 'first_offer_public_checkout',
+            customer_email: email,
+            idempotency_key: idempotencyKey,
+          },
+        };
+
+        const result = await createAmploPayPix(amploPayload);
+        upstreamOk = result.ok;
+        upstreamStatus = result.status;
+        upstreamData = result.data;
+      } else {
+        // ── Babylon ──
+        const gatewayPayload = {
+          amount: Math.round(amountCents),
+          currency: 'BRL',
+          payment_method: 'PIX',
+          paymentMethod: 'PIX',
+          ...(babylonWebhookCallbackUrl ? { postback_url: babylonWebhookCallbackUrl, postbackUrl: babylonWebhookCallbackUrl } : {}),
+          customer: {
+            name,
+            email,
+            phone: phoneDigits.length >= 10 ? phoneDigits.slice(0, 11) : '11999999999',
+            document: {
+              type: 'CPF',
+              number: normalizeDigits(payload?.customer?.cpf || payload?.customer?.document || '').slice(0, 11) || generateValidCpf(),
+            },
+          },
+          items: validatedItems.map((item) => ({
+            title: item.title,
+            unitPrice: Math.round(item.unitPriceCents),
+            quantity: item.quantity,
+            externalRef: checkoutOrderId,
+          })),
+          external_id: checkoutOrderId,
           externalRef: checkoutOrderId,
-        })),
-        external_id: checkoutOrderId,
-        externalRef: checkoutOrderId,
-        idempotency_key: idempotencyKey,
-        description: validatedItems.map((item) => item.title).join(' + '),
-        metadata: {
-          checkout_order_id: checkoutOrderId,
-          source: 'first_offer_public_checkout',
-          customer_email: email,
-          customer_phone: phoneDigits.length >= 10 ? phoneDigits.slice(0, 11) : null,
-          total_items: totalItems,
-          total_amount_cents: Math.round(amountCents),
-          items_breakdown: validatedItems,
-        },
-      };
+          idempotency_key: idempotencyKey,
+          description: validatedItems.map((item) => item.title).join(' + '),
+          metadata: {
+            checkout_order_id: checkoutOrderId,
+            source: 'first_offer_public_checkout',
+            customer_email: email,
+            customer_phone: phoneDigits.length >= 10 ? phoneDigits.slice(0, 11) : null,
+            total_items: totalItems,
+            total_amount_cents: Math.round(amountCents),
+            items_breakdown: validatedItems,
+          },
+        };
 
-      const upstreamResponse = await fetch(`${baseUrl}/transactions`, {
-        method: 'POST',
-        headers: {
-          Authorization: getAuthHeader(),
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(gatewayPayload),
-      });
+        const upstreamResponse = await fetch(`${baseUrl}/transactions`, {
+          method: 'POST',
+          headers: {
+            Authorization: getAuthHeader(),
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(gatewayPayload),
+        });
 
-      const upstreamText = await upstreamResponse.text();
-      let upstreamData = upstreamText;
-      try {
-        upstreamData = upstreamText ? JSON.parse(upstreamText) : {};
-      } catch {
-        upstreamData = upstreamText;
+        upstreamStatus = upstreamResponse.status;
+        upstreamOk = upstreamResponse.ok;
+        const upstreamText = await upstreamResponse.text();
+        try {
+          upstreamData = upstreamText ? JSON.parse(upstreamText) : {};
+        } catch {
+          upstreamData = upstreamText;
+        }
       }
 
-      if (!upstreamResponse.ok) {
+      if (!upstreamOk) {
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
-        res.writeHead(upstreamResponse.status);
+        res.writeHead(upstreamStatus || 502);
         res.end(JSON.stringify({
-          error: 'Falha ao criar transação na Babylon',
+          error: `Falha ao criar transação no gateway (${isAmploPay ? 'AmploPay' : 'Babylon'})`,
           detail: upstreamData,
         }));
         return;
       }
 
-      const providerOrderId = upstreamData?.provider_order_id
-        || upstreamData?.order_id
-        || upstreamData?.transaction_id
-        || upstreamData?.id
-        || upstreamData?.data?.id
-        || null;
+      const providerOrderId = isAmploPay
+        ? (upstreamData?.transactionId || upstreamData?.id || null)
+        : (upstreamData?.provider_order_id || upstreamData?.order_id || upstreamData?.transaction_id || upstreamData?.id || upstreamData?.data?.id || null);
+
+      const gatewayStatus = isAmploPay
+        ? normalizeAmploPayStatus(String(upstreamData?.status || 'PENDING'))
+        : String(upstreamData?.status || upstreamData?.data?.status || 'pending').toLowerCase();
+
+      // Tratar transação recusada como erro
+      if (isFailurePaymentStatus(gatewayStatus)) {
+        const refusedDescription = upstreamData?.refusedReason?.description
+          || upstreamData?.refusedReason?.message
+          || upstreamData?.data?.refusedReason?.description
+          || 'Transação recusada pelo gateway de pagamento';
+
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.writeHead(422);
+        res.end(JSON.stringify({
+          ok: false,
+          error: refusedDescription,
+          gatewayStatus,
+          orderId: checkoutOrderId,
+          providerOrderId,
+          raw: upstreamData,
+        }));
+        return;
+      }
 
       const artifacts = collectCheckoutArtifacts(upstreamData);
 
@@ -1013,7 +1571,7 @@ const server = createServer(async (req, res) => {
         ok: true,
         orderId: checkoutOrderId,
         providerOrderId,
-        gatewayStatus: String(upstreamData?.status || upstreamData?.data?.status || 'pending').toLowerCase(),
+        gatewayStatus,
         pixCopyPasteCode: artifacts.pixCopyPasteCode,
         pixQrUrl: artifacts.pixQrUrl,
         raw: upstreamData,
@@ -1156,6 +1714,86 @@ const server = createServer(async (req, res) => {
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
       res.writeHead(500);
       res.end(JSON.stringify({ error: 'Erro ao atualizar saldo', message: err?.message || 'Erro desconhecido' }));
+    }
+    return;
+  }
+
+  // ── Public: Get active payment gateway name ──
+  if (pathname === '/api/public/active-gateway' && req.method === 'GET') {
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.writeHead(200);
+    res.end(JSON.stringify({ activeGateway }));
+    return;
+  }
+
+  // ── Admin: Get active payment gateway ──
+  if (pathname === '/api/admin/payment-gateway' && req.method === 'GET') {
+    const authResult = await authenticateRequestUser(req);
+    if (!authResult.user) {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.writeHead(authResult.status);
+      res.end(JSON.stringify({ error: authResult.error }));
+      return;
+    }
+    const adminResult = await assertAdminUser(authResult.user.id);
+    if (!adminResult.ok) {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.writeHead(adminResult.status);
+      res.end(JSON.stringify({ error: adminResult.error }));
+      return;
+    }
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.writeHead(200);
+    res.end(JSON.stringify({
+      ok: true,
+      activeGateway,
+      babylonConfigured: Boolean(getAuthHeader()),
+      amploPayConfigured: isAmploPayConfigured(),
+    }));
+    return;
+  }
+
+  // ── Admin: Switch active payment gateway ──
+  if (pathname === '/api/admin/payment-gateway' && req.method === 'PUT') {
+    const authResult = await authenticateRequestUser(req);
+    if (!authResult.user) {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.writeHead(authResult.status);
+      res.end(JSON.stringify({ error: authResult.error }));
+      return;
+    }
+    const adminResult = await assertAdminUser(authResult.user.id);
+    if (!adminResult.ok) {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.writeHead(adminResult.status);
+      res.end(JSON.stringify({ error: adminResult.error }));
+      return;
+    }
+    try {
+      const rawBody = await readRequestBody(req);
+      const body = parseJsonSafe(rawBody);
+      const gateway = String(body?.gateway || '').trim().toLowerCase();
+      if (gateway !== 'babylon' && gateway !== 'amplopay') {
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.writeHead(400);
+        res.end(JSON.stringify({ error: 'Gateway inválido. Use "babylon" ou "amplopay".' }));
+        return;
+      }
+      activeGateway = gateway;
+      isAmploPay = gateway === 'amplopay';
+      console.log(`[ADMIN] Payment gateway switched to: ${activeGateway} by user ${authResult.user.id}`);
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.writeHead(200);
+      res.end(JSON.stringify({
+        ok: true,
+        activeGateway,
+        babylonConfigured: Boolean(getAuthHeader()),
+        amploPayConfigured: isAmploPayConfigured(),
+      }));
+    } catch (err) {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.writeHead(500);
+      res.end(JSON.stringify({ error: 'Erro ao alterar gateway', message: err?.message || 'Erro desconhecido' }));
     }
     return;
   }
@@ -1393,7 +2031,7 @@ const server = createServer(async (req, res) => {
     const upstreamPath = requestUrl.pathname.replace('/api/babylon', '');
     const upstreamUrl = `${baseUrl}${upstreamPath}${requestUrl.search}`;
 
-    const requestBody = await readRequestBody(req);
+    let requestBody = await readRequestBody(req);
     const hasBody = requestBody.length > 0;
     const isClaimPendingBenefitsPath = req.method === 'POST' && upstreamPath === '/claim-pending-benefits';
 
@@ -1444,6 +2082,84 @@ const server = createServer(async (req, res) => {
           res.end(JSON.stringify({ error: 'Forbidden: checkout order não pertence ao usuário autenticado' }));
           return;
         }
+      }
+
+      // ── AmploPay routing for wallet top-up / generic transactions ──
+      if (isAmploPay && isAmploPayConfigured() && payload) {
+        const topupCredits = Number(payload?.metadata?.topup_credits || 0);
+        const amountCents = Number(payload?.amount || 0);
+        const amountBrl = Math.round(amountCents) / 100;
+        const customerName = payload?.customer?.name || payload?.customer?.full_name || 'Cliente';
+        const customerEmail = payload?.customer?.email || '';
+        const customerPhone = normalizeDigits(payload?.customer?.phone || '').slice(0, 11);
+        const customerDoc = normalizeDigits(payload?.customer?.cpf || payload?.customer?.document?.number || payload?.customer?.document || '').slice(0, 11);
+
+        const amploPayload = {
+          identifier: checkoutOrderId,
+          amount: amountBrl,
+          client: {
+            name: customerName,
+            email: customerEmail,
+            ...(customerPhone ? { phone: customerPhone } : {}),
+            ...(customerDoc ? { document: customerDoc } : {}),
+          },
+          ...(amploPayWebhookCallbackUrl ? { callbackUrl: amploPayWebhookCallbackUrl } : {}),
+          metadata: {
+            checkout_order_id: checkoutOrderId,
+            source: payload?.metadata?.source || 'wallet_topup',
+            ...(topupCredits ? { topup_credits: topupCredits } : {}),
+          },
+        };
+
+        const result = await createAmploPayPix(amploPayload);
+
+        if (!result.ok) {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8');
+          res.writeHead(result.status || 502);
+          res.end(JSON.stringify({
+            error: 'Falha ao criar transação no AmploPay',
+            detail: result.data,
+          }));
+          return;
+        }
+
+        const providerOrderId = result.data?.transactionId || result.data?.id || null;
+        const gatewayStatus = normalizeAmploPayStatus(String(result.data?.status || 'PENDING'));
+        const artifacts = collectCheckoutArtifacts(result.data);
+
+        // Update checkout_orders with AmploPay provider info
+        await supabaseAdmin
+          .from('checkout_orders')
+          .update({
+            status: isFailurePaymentStatus(gatewayStatus) ? 'failed' : 'pending',
+            provider_name: 'amplopay',
+            provider_order_id: providerOrderId,
+          })
+          .eq('id', checkoutOrderId);
+
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.writeHead(200);
+        res.end(JSON.stringify({
+          ok: true,
+          id: providerOrderId,
+          status: gatewayStatus,
+          provider_order_id: providerOrderId,
+          transaction_id: providerOrderId,
+          pix: {
+            code: artifacts.pixCopyPasteCode || '',
+            qrCode: artifacts.pixCopyPasteCode || '',
+          },
+          ...(artifacts.pixQrUrl ? { pixQrUrl: artifacts.pixQrUrl } : {}),
+          ...(artifacts.checkoutUrl ? { checkoutUrl: artifacts.checkoutUrl } : {}),
+        }));
+        return;
+      }
+
+      // Inject postbackUrl so Babylon sends webhook notifications
+      if (babylonWebhookCallbackUrl && payload) {
+        payload.postback_url = babylonWebhookCallbackUrl;
+        payload.postbackUrl = babylonWebhookCallbackUrl;
+        requestBody = Buffer.from(JSON.stringify(payload), 'utf8');
       }
     }
 
@@ -1503,4 +2219,9 @@ const server = createServer(async (req, res) => {
 
 server.listen(port, () => {
   console.log(`[babylon-proxy] running on http://localhost:${port}`);
+  if (babylonWebhookCallbackUrl) {
+    console.log(`[babylon-proxy] webhook callback URL: ${babylonWebhookCallbackUrl}`);
+  } else {
+    console.log('[babylon-proxy] WARNING: no webhook callback URL configured (set PUBLIC_APP_URL or BABYLON_WEBHOOK_CALLBACK_URL)');
+  }
 });
