@@ -108,6 +108,18 @@ async function createAdmin() {
 
         adminUserId = created.data.user?.id;
         console.log('✅ Admin criado no Auth.');
+
+        // IMPORTANTE: Forçar criação de identidade atualizando a senha
+        const { error: identityError } = await adminClient.auth.admin.updateUserById(adminUserId, {
+            password,
+            email_confirm: true,
+        });
+
+        if (identityError) {
+            console.warn('⚠️ Aviso: Não foi possível garantir identidade:', identityError.message);
+        } else {
+            console.log('✅ Identidade criada com sucesso.');
+        }
     } else {
         const updated = await adminClient.auth.admin.updateUserById(existing.id, {
             password,
