@@ -53,6 +53,8 @@ export function Login() {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
+    const [failedAttempts, setFailedAttempts] = useState(0);
+    const [cooldownUntil, setCooldownUntil] = useState(null);
 
     const [formData, setFormData] = useState({
         name: '',
@@ -76,10 +78,33 @@ export function Login() {
         localStorage.setItem('concursaflix.adminInviteToken', inviteToken);
     }, [location.search]);
 
+    // Gerencia cooldown de tentativas falhadas
+    useEffect(() => {
+        if (!cooldownUntil) return;
+        
+        const checkCooldown = () => {
+            if (Date.now() >= cooldownUntil) {
+                setCooldownUntil(null);
+                setFailedAttempts(0);
+            }
+        };
+        
+        const interval = setInterval(checkCooldown, 1000);
+        return () => clearInterval(interval);
+    }, [cooldownUntil]);
+
     const handleSubmit = async (e) => {
         e.preventDefault();
         setError('');
         setSuccess('');
+
+        // Verifica se está em cooldown
+        if (cooldownUntil && Date.now() < cooldownUntil) {
+            const remainingSeconds = Math.ceil((cooldownUntil - Date.now()) / 1000);
+            setError(`Muitas tentativas. Aguarde ${remainingSeconds}s antes de tentar novamente.`);
+            return;
+        }
+
         setLoading(true);
 
         try {
@@ -95,6 +120,14 @@ export function Login() {
                     password: formData.password,
                 });
                 if (error) throw error;
+                
+                // Login bem-sucedido - reseta tentativas e limpa qualquer cache problemático
+                setFailedAttempts(0);
+                setCooldownUntil(null);
+                
+                // Limpa possíveis dados de sessão corrompidos antes de navegar
+                sessionStorage.clear();
+                
                 navigate('/plataformas');
             } else {
                 const whatsappDigits = onlyDigits(formData.whatsapp);
@@ -117,14 +150,33 @@ export function Login() {
                 trackCompleteRegistration({ email: normalizedEmail });
                 setSuccess('Cadastro realizado! Verifique seu e-mail para confirmar e depois faça login.');
                 setIsLogin(true);
+                setFailedAttempts(0);
             }
         } catch (err) {
             console.error(err);
             const rawMessage = String(err?.message || '');
+            
+            // Incrementa tentativas falhadas apenas para erros de credenciais
             if (rawMessage === 'Invalid login credentials') {
-                setError('Credenciais inválidas.');
+                const newAttempts = failedAttempts + 1;
+                setFailedAttempts(newAttempts);
+                
+                // Aplica cooldown progressivo após múltiplas tentativas
+                if (newAttempts >= 5) {
+                    const cooldownSeconds = 60; // 1 minuto após 5 tentativas
+                    setCooldownUntil(Date.now() + cooldownSeconds * 1000);
+                    setError(`Credenciais inválidas. Muitas tentativas. Aguarde ${cooldownSeconds}s.`);
+                } else if (newAttempts >= 3) {
+                    const cooldownSeconds = 15; // 15 segundos após 3 tentativas
+                    setCooldownUntil(Date.now() + cooldownSeconds * 1000);
+                    setError(`Credenciais inválidas. Aguarde ${cooldownSeconds}s antes de tentar novamente.`);
+                } else {
+                    setError(`Credenciais inválidas. Verifique seu e-mail e senha. (Tentativa ${newAttempts}/3)`);
+                }
             } else if (rawMessage.toLowerCase().includes('failed to fetch') || rawMessage.toLowerCase().includes('network')) {
-                setError('Falha de conexão no login. Tente novamente em alguns segundos.');
+                setError('Falha de conexão. Verifique sua internet e tente novamente.');
+            } else if (rawMessage.toLowerCase().includes('abort')) {
+                setError('Requisição cancelada. Limpe o cache do navegador (Ctrl+Shift+Del) e tente novamente.');
             } else {
                 setError(rawMessage || 'Não foi possível concluir o login agora.');
             }
@@ -276,6 +328,11 @@ export function Login() {
                         {error && (
                             <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-500 text-sm text-center">
                                 {error}
+                                {failedAttempts >= 2 && !cooldownUntil && (
+                                    <div className="mt-2 text-xs text-red-400">
+                                        Dica: Verifique se está usando o e-mail correto cadastrado.
+                                    </div>
+                                )}
                             </div>
                         )}
 
@@ -285,7 +342,11 @@ export function Login() {
                             </div>
                         )}
 
-                        <Button type="submit" className="w-full h-12 text-base shadow-lg shadow-primary/20" disabled={loading}>
+                        <Button 
+                            type="submit" 
+                            className="w-full h-12 text-base shadow-lg shadow-primary/20" 
+                            disabled={loading || (cooldownUntil && Date.now() < cooldownUntil)}
+                        >
                             {loading ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : null}
                             {isLogin ? 'Entrar na Plataforma' : 'Criar Conta Gratuita'}
                             {!loading && <ArrowRight className="ml-2 h-5 w-5" />}

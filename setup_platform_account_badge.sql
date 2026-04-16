@@ -16,7 +16,8 @@ alter table public.platforms alter column account_badge_count set not null;
 
 drop view if exists public.platforms_public;
 
-create view public.platforms_public as
+create view public.platforms_public
+with (security_invoker = true) as
 select
   p.id,
   p.name,

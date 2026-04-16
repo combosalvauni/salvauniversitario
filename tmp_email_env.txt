@@ -1,0 +1,16 @@
+
+# -- E-mails transacionais do checkout (Resend) --
+CHECKOUT_EMAILS_ENABLED=true
+CHECKOUT_EMAIL_PROVIDER=resend
+CHECKOUT_EMAIL_FROM=Combo Salva Universitario <contato@combosalvauniversitario.site>
+CHECKOUT_EMAIL_REPLY_TO=contato@combosalvauniversitario.site
+CHECKOUT_EMAIL_BCC=
+CHECKOUT_EMAIL_BRAND_NAME=Combo Salva Universitario
+CHECKOUT_EMAIL_ASSET_BASE_URL=https://api.combosalvauniversitario.site
+CHECKOUT_EMAIL_LOGO_URL=https://api.combosalvauniversitario.site/email-assets/logo-pvpmbwn.png
+CHECKOUT_EMAIL_HERO_URL=
+CHECKOUT_EMAIL_BADGE_URL=https://api.combosalvauniversitario.site/email-assets/garantia-30-dias.png
+CHECKOUT_EMAIL_TESTIMONIAL_URL=https://api.combosalvauniversitario.site/email-assets/depoimento-bel.webp
+CHECKOUT_EMAIL_PRIMARY_CTA_URL=https://app.combosalvauniversitario.site
+CHECKOUT_EMAIL_SUPPORT_URL=
+RESEND_API_KEY=re_g1MioBhK_8RUivvHAzHM25PhYeQ5eAooi

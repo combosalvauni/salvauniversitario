@@ -1,0 +1,80 @@
+export const checkoutEmailTheme = {
+  // Canva-style palette
+  pageBackground: '#f6ede7',
+  shellBackground: '#fffaf6',
+  shellBorder: 'none',
+  brandBarBg: '#090504',
+  brandBarText: '#ffffff',
+  accentOrange: '#ff5400',
+  accentOrangeBlock: '#ff6b24',
+  warmCream: '#fff1e6',
+  separator: '#efc5ae',
+  titleColor: '#24110b',
+  bodyText: '#2a140b',
+  bodyTextLight: '#6d4938',
+  buttonBg: '#fff6f0',
+  buttonBorder: '#f0c3a7',
+  buttonText: '#2a140b',
+  ctaOrangeBg: '#ff5400',
+  ctaOrangeText: '#ffffff',
+  pixCodeBg: '#fff5ee',
+  pixCodeBorder: '#f1c7ae',
+  pixCodeText: '#24110b',
+  footerBg: '#f1e1d6',
+  footerText: '#7b5a47',
+};
+
+export function getCheckoutEmailCopy({ eventType, brandName, offerName, customerEmail }) {
+  if (eventType === 'payment_approved') {
+    return {
+      subject: `Acesso liberado no ${brandName}`,
+      eyebrow: 'Acesso liberado',
+      title: 'Acesso liberado',
+      subtitle: 'Pagamento confirmado. Seu combo ja pode ser ativado no app.',
+      bodyParagraphs: [
+        `Seu pagamento foi confirmado e a sua entrada ja esta liberada.`,
+        `Use exatamente o e-mail ${customerEmail} para ativar o acesso.`,
+        `Se voce ja criou a conta antes, basta entrar normalmente e continuar.`,
+      ],
+      summaryTitle: 'Resumo do pedido',
+      itemsTitle: 'Itens do pedido',
+      calloutTitle: 'Entrar no app',
+      calloutText: 'Entre no app com o mesmo e-mail da compra para concluir a ativacao.',
+      calloutButtonLabel: 'Entrar no app agora',
+      trustTitle: 'Compra protegida',
+      trustText: 'Você está coberto pela garantia de 30 dias.',
+      testimonialTitle: '',
+      testimonialText: '',
+      supportTitle: 'Canal direto',
+      supportText: '',
+      footerText: 'Se não reconhece esta compra, responda este e-mail para que a equipe possa verificar.',
+      textIntro: `Pagamento aprovado. Seu acesso ao ${offerName} ja pode ser ativado.`,
+      textOutro: 'Abra o app e entre com o mesmo e-mail da compra.',
+    };
+  }
+
+  return {
+    subject: `Seu PIX do ${offerName} está pronto`,
+    eyebrow: 'PIX pronto',
+    title: 'Finalize o pagamento',
+    subtitle: 'Assim que o PIX for confirmado, o acesso ao app é liberado automaticamente.',
+    bodyParagraphs: [
+      `Use o código abaixo ou abra o QR do PIX no seu banco para concluir o pagamento agora.`,
+      `Assim que a confirmação cair, você receberá outro e-mail avisando que o acesso já está liberado.`,
+      `Depois disso, faça o cadastro no app com o MESMO e-mail desta compra.`,
+    ],
+    summaryTitle: 'Resumo do pedido',
+    itemsTitle: 'Itens do pedido',
+    pixPanelTitle: 'PIX copia e cola',
+    pixLinkLabel: 'Abrir QR do PIX',
+    trustTitle: 'Compra protegida',
+    trustText: 'Você está coberto pela garantia de 30 dias.',
+    testimonialTitle: '',
+    testimonialText: '',
+    supportTitle: 'Precisa de ajuda?',
+    supportText: '',
+    footerText: 'Guarde este e-mail caso precise retomar o pagamento.',
+    textIntro: `Seu checkout do ${offerName} avançou e o PIX já foi gerado.`,
+    textOutro: 'Assim que o pagamento for confirmado, você receberá outro e-mail.',
+  };
+}

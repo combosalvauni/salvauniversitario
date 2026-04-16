@@ -317,7 +317,8 @@ where (p.access_email is not null or p.access_password is not null)
 -- (created by the SQL editor owner; owner bypasses RLS unless FORCE RLS is enabled)
 drop view if exists public.platforms_public;
 
-create view public.platforms_public as
+create view public.platforms_public
+with (security_invoker = true) as
 select
   p.id,
   p.name,

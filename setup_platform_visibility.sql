@@ -10,7 +10,8 @@ where is_visible is null;
 
 drop view if exists public.platforms_public;
 
-create view public.platforms_public as
+create view public.platforms_public
+with (security_invoker = true) as
 select
   p.id,
   p.name,

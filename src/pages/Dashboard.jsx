@@ -124,7 +124,8 @@ export function Dashboard() {
                         setUserAccesses([]);
                     }
                 } else {
-                    const nowIso = new Date().toISOString();
+                    const now = new Date();
+                    const nowIso = now.toISOString();
                     const [{ data: assignmentsData }, { data: balanceData }] = await Promise.all([
                         supabase
                             .from('platform_account_assignments')
@@ -132,9 +133,8 @@ export function Dashboard() {
                             .eq('profile_id', user.id)
                             .is('revoked_at', null)
                             .eq('show_to_user', true)
-                            .lte('valid_from', nowIso)
-                            .or(`valid_until.is.null,valid_until.gt.${nowIso}`)
-                            .eq('platform_accounts.status', 'active'),
+                            .eq('platform_accounts.status', 'active')
+                            .lte('valid_from', nowIso),
                         supabase
                             .from('wallet_balances')
                             .select('balance')
@@ -142,11 +142,14 @@ export function Dashboard() {
                             .maybeSingle(),
                     ]);
 
-                    const validAccesses = (assignmentsData || []).sort((a, b) => {
-                        const timeA = a?.valid_until ? new Date(a.valid_until).getTime() : Number.POSITIVE_INFINITY;
-                        const timeB = b?.valid_until ? new Date(b.valid_until).getTime() : Number.POSITIVE_INFINITY;
-                        return timeA - timeB;
-                    });
+                    // Filtrar atribuições que não venceram (valid_until é null ou no futuro)
+                    const validAccesses = (assignmentsData || [])
+                        .filter(row => !row.valid_until || new Date(row.valid_until) >= now)
+                        .sort((a, b) => {
+                            const timeA = a?.valid_until ? new Date(a.valid_until).getTime() : Number.POSITIVE_INFINITY;
+                            const timeB = b?.valid_until ? new Date(b.valid_until).getTime() : Number.POSITIVE_INFINITY;
+                            return timeA - timeB;
+                        });
 
                     const soon = validAccesses
                         .filter((row) => isSoon(row.valid_until))

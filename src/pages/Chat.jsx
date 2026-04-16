@@ -4,9 +4,9 @@ import { supabase } from '../lib/supabase';
 
 const DEFAULT_SUPPORT_SETTINGS = {
     email_title: 'E-mail de Suporte',
-    email_value: 'contato@concursaflix.com',
+    email_value: 'contato@combosalvauniversitario.site',
     email_button_text: 'Entrar em Contato',
-    email_url: 'mailto:contato@concursaflix.com',
+    email_url: 'mailto:contato@combosalvauniversitario.site',
     whatsapp_title: 'WhatsApp',
     whatsapp_value: '55 16 99885-9608',
     whatsapp_button_text: 'Entrar em Contato',

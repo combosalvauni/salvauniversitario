@@ -12,6 +12,10 @@ Copie `.env.example` para `.env` e preencha:
 - `BABYLON_COMPANY_ID`
 - `BABYLON_BASE_URL` (padrão: `https://api.bancobabylon.com/functions/v1`)
 - `BABYLON_PROXY_PORT` (padrão: `8787`)
+- `CHECKOUT_EMAILS_ENABLED=true` se quiser habilitar os e-mails do checkout público
+- `CHECKOUT_EMAIL_PROVIDER=resend`
+- `CHECKOUT_EMAIL_FROM` com o remetente validado no Resend
+- `RESEND_API_KEY` com a chave da conta Resend
 
 ### 2) Rodar em desenvolvimento
 
@@ -53,6 +57,49 @@ Quando chegar evento `payment.approved` (ou equivalente), o backend chama a RPC
 
 Assim o usuário normal passa a ver o acesso automaticamente na página de plataformas.
 
+### 2.2) E-mails transacionais do checkout público
+
+Se `CHECKOUT_EMAILS_ENABLED=true`, o proxy envia dois e-mails personalizados no checkout público:
+
+- quando o checkout avança e o PIX é gerado
+- quando o pagamento é aprovado (via webhook ou fallback de status)
+
+Variáveis usadas:
+
+- `CHECKOUT_EMAIL_PROVIDER=resend`
+- `CHECKOUT_EMAIL_FROM=Sua Marca <remetente-validado@seudominio.com>`
+- `CHECKOUT_EMAIL_REPLY_TO=<opcional>`
+- `CHECKOUT_EMAIL_BCC=<opcional, separados por vírgula>`
+- `CHECKOUT_EMAIL_BRAND_NAME=<opcional>`
+- `CHECKOUT_EMAIL_ASSET_BASE_URL=https://seudominio.com` para usar os assets padrão em `/email-assets/*` (o host precisa responder `200` nesses arquivos)
+- `CHECKOUT_EMAIL_LOGO_URL=<opcional>`
+- `CHECKOUT_EMAIL_HERO_URL=<opcional>`
+- `CHECKOUT_EMAIL_BADGE_URL=<opcional>`
+- `CHECKOUT_EMAIL_TESTIMONIAL_URL=<opcional>`
+- `CHECKOUT_EMAIL_PRIMARY_CTA_URL=<opcional>`
+- `CHECKOUT_EMAIL_SUPPORT_URL=<opcional>`
+- `RESEND_API_KEY=<sua-chave>`
+
+Observação: o envio é feito no backend para não expor a chave da API de e-mail no frontend.
+
+Para mudar design e texto com facilidade, edite:
+
+- `server/checkoutEmailContent.mjs` para assunto, títulos, textos e cores
+- `.env` para remetente, reply-to, bcc e nome da marca
+
+Assets padrão criados para o e-mail:
+
+- `public/email-assets/logo-salva-universitario.png`
+- `public/email-assets/hero-salva-universitario.jpg`
+- `public/email-assets/garantia-30-dias.png`
+- `public/email-assets/depoimento-bel.webp`
+
+Preview local do template:
+
+- suba o backend com `npm run dev:babylon`
+- abra `http://localhost:8787/api/dev/checkout-email-preview?type=pix_ready`
+- para ver o aprovado, use `http://localhost:8787/api/dev/checkout-email-preview?type=payment_approved`
+
 ### 3) Exemplo de uso no frontend
 
 Use `src/lib/babylonApi.js`:
@@ -88,6 +135,16 @@ Variáveis obrigatórias do serviço backend:
 - `PUBLIC_APP_URL=https://combosalvauniversitario.site`
 - `SUPABASE_URL=https://SEU-PROJETO.supabase.co`
 - `SUPABASE_SERVICE_ROLE_KEY=<service-role-key>`
+- `CHECKOUT_EMAILS_ENABLED=true`
+- `CHECKOUT_EMAIL_PROVIDER=resend`
+- `CHECKOUT_EMAIL_FROM=Sua Marca <remetente-validado@seudominio.com>`
+- `CHECKOUT_EMAIL_REPLY_TO=<opcional>`
+- `CHECKOUT_EMAIL_BCC=<opcional>`
+- `CHECKOUT_EMAIL_BRAND_NAME=Combo Salva Universitario`
+- `CHECKOUT_EMAIL_ASSET_BASE_URL=https://api.combosalvauniversitario.site`
+- `CHECKOUT_EMAIL_PRIMARY_CTA_URL=https://combosalvauniversitario.site`
+- `CHECKOUT_EMAIL_SUPPORT_URL=<opcional>`
+- `RESEND_API_KEY=<resend-api-key>`
 
 Quando publicar, você terá uma URL tipo:
 

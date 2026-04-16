@@ -28,8 +28,11 @@ Write-Host ""
 # 1) Health
 try {
   $health = Invoke-RestMethod -Uri "$ApiBase/health" -Method Get
-  $healthOk = $health.ok -eq $true -and $health.configured -eq $true -and $health.supabaseConfigured -eq $true -and $health.webhookTokenConfigured -eq $true
-  Write-Check 'Health' $healthOk ("ok={0}, configured={1}, supabase={2}, webhookToken={3}" -f $health.ok, $health.configured, $health.supabaseConfigured, $health.webhookTokenConfigured)
+  $configured = [bool]$health.configured
+  $supabaseConfigured = [bool]$health.supabaseConfigured
+  $webhookTokenConfigured = [bool]$health.webhookTokenConfigured
+  $healthOk = $health.ok -eq $true -and $configured -and $supabaseConfigured -and $webhookTokenConfigured
+  Write-Check 'Health' $healthOk ("ok={0}, status={1}, configured={2}, supabase={3}, webhookToken={4}" -f $health.ok, $health.status, $configured, $supabaseConfigured, $webhookTokenConfigured)
   if (-not $healthOk) { $allOk = $false }
 } catch {
   $allOk = $false

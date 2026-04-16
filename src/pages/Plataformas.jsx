@@ -77,39 +77,59 @@ export function Plataformas() {
             setPlatforms(filtered);
 
             if (!isAdmin) {
-                const nowIso = new Date().toISOString();
+                const now = new Date();
+                const nowIso = now.toISOString();
 
-                const { data: assignments, error: assignmentsError } = await supabase
-                    .from('platform_account_assignments')
-                    .select('valid_from, created_at, platform_accounts!inner(platform_id, status)')
-                    .eq('profile_id', user?.id)
-                    .is('revoked_at', null)
-                    .eq('show_to_user', true)
-                    .lte('valid_from', nowIso)
-                    .or(`valid_until.is.null,valid_until.gt.${nowIso}`)
-                    .eq('platform_accounts.status', 'active');
+                try {
+                    // Query para atribuições válidas (not revoked, visible, within valid dates, active account)
+                    const { data: assignments, error: assignmentsError } = await supabase
+                        .from('platform_account_assignments')
+                        .select('valid_from, created_at, valid_until, platform_accounts!inner(platform_id, status)')
+                        .eq('profile_id', user?.id)
+                        .is('revoked_at', null)
+                        .eq('show_to_user', true)
+                        .eq('platform_accounts.status', 'active')
+                        .lte('valid_from', nowIso);
 
-                if (assignmentsError) throw assignmentsError;
-
-                const platformIdSet = new Set();
-                const priorityByPlatform = new Map();
-
-                for (const row of assignments || []) {
-                    const platformId = row?.platform_accounts?.platform_id;
-                    if (!platformId) continue;
-
-                    platformIdSet.add(platformId);
-
-                    const timeValue = Date.parse(row?.valid_from || row?.created_at || '');
-                    if (!Number.isFinite(timeValue)) continue;
-                    const prev = priorityByPlatform.get(platformId) || 0;
-                    if (timeValue > prev) {
-                        priorityByPlatform.set(platformId, timeValue);
+                    if (assignmentsError) {
+                        console.error('Error in assignment query:', assignmentsError);
+                        throw assignmentsError;
                     }
-                }
 
-                setAccessSet(platformIdSet);
-                setAccessPriorityMap(priorityByPlatform);
+                    const platformIdSet = new Set();
+                    const priorityByPlatform = new Map();
+
+                    // Filtrar apenas atribuições que não venceram
+                    for (const row of assignments || []) {
+                        // Verificar se ainda está válido (valid_until é null ou no futuro)
+                        if (row.valid_until) {
+                            const validUntil = new Date(row.valid_until);
+                            if (validUntil < now) {
+                                continue; // Pulsa atribuições vencidas
+                            }
+                        }
+
+                        const platformId = row?.platform_accounts?.platform_id;
+                        if (!platformId) continue;
+
+                        platformIdSet.add(platformId);
+
+                        const timeValue = Date.parse(row?.valid_from || row?.created_at || '');
+                        if (!Number.isFinite(timeValue)) continue;
+                        const prev = priorityByPlatform.get(platformId) || 0;
+                        if (timeValue > prev) {
+                            priorityByPlatform.set(platformId, timeValue);
+                        }
+                    }
+
+                    setAccessSet(platformIdSet);
+                    setAccessPriorityMap(priorityByPlatform);
+                } catch (assignmentError) {
+                    console.error('Error processing assignments:', assignmentError);
+                    // Se houver erro ao buscar atribuições, não falha totalmente
+                    setAccessSet(new Set());
+                    setAccessPriorityMap(new Map());
+                }
             } else {
                 setAccessSet(new Set());
                 setAccessPriorityMap(new Map());
@@ -345,7 +365,7 @@ export function Plataformas() {
                                         <Button
                                             className="w-full"
                                             variant="primary"
-                                            onClick={() => window.open(selectedPlatform.open_link, '_blank')}
+                                            onClick={() => window.open(selectedPlatform.open_link, '_blank', 'noopener,noreferrer')}
                                         >
                                             <Download className="mr-2 h-4 w-4" /> Acessar plataforma
                                         </Button>

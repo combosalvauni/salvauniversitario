@@ -16,11 +16,21 @@ const adminClient = serviceRoleKey
 
 async function createAdmin() {
     const email = process.env.ADMIN_EMAIL || 'admin@concursaflix.com';
-    const password = process.env.ADMIN_PASSWORD || 'admin_master_password';
+    const password = String(process.env.ADMIN_PASSWORD || '').trim();
     const name = process.env.ADMIN_NAME || 'Administrador Supremo';
 
     if (!supabaseUrl || !supabaseAnonKey) {
         console.error('❌ VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY são obrigatórios no .env');
+        return;
+    }
+
+    if (!password) {
+        console.error('❌ ADMIN_PASSWORD é obrigatório no .env para criar/resetar o admin com segurança.');
+        return;
+    }
+
+    if (password === 'admin_master_password') {
+        console.error('❌ ADMIN_PASSWORD está com o valor padrão inseguro. Defina uma senha forte antes de executar o script.');
         return;
     }
 
@@ -140,7 +150,7 @@ async function createAdmin() {
     console.log('---');
     console.log('Login admin pronto para uso:');
     console.log('Email:', email);
-    console.log('Senha:', password);
+    console.log('Senha: [oculta]');
 }
 
 createAdmin();

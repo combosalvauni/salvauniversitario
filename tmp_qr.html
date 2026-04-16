@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>WhatsApp QR Code</title>
+<script src="https://unpkg.com/qrious@4.0.2/dist/qrious.min.js"></script>
+<style>
+body { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; margin: 0; background: #0a1628; font-family: Arial, sans-serif; color: white; }
+h1 { font-size: 1.5rem; margin-bottom: 0.5rem; }
+p { color: #aaa; margin-bottom: 1.5rem; }
+canvas { border-radius: 12px; }
+</style>
+</head>
+<body>
+<h1>📱 Escaneie com o WhatsApp</h1>
+<p>Configurações → Dispositivos conectados → Conectar um dispositivo</p>
+<canvas id="qr"></canvas>
+<p id="timer" style="margin-top:1rem; color:#ff9800;"></p>
+<script>
+const data = "2@sbsY92O5BzvbMvPgR71d0uUp5R9n+zLJvn/7tLL4GVqRNY2YGwKEBxdYNEWNxTMQK/63q1PZuWhbBzi+7TIjnTaBhvB990/eB1c=,MU99XteC/DMOC3rnR/BopqKwOqEnBecvvx4ezuyNFnM=,P077zH7aUXzCEyO8pdGC+ryXDvpb2mUC6bEZeRue7XI=,97POZ2d/ARSipTN2dMaWjsNKxMjymtduRiyw3RvHG/0=";
+new QRious({ element: document.getElementById('qr'), value: data, size: 400, backgroundAlpha: 1, foreground: '#000', background: '#fff' });
+let s = 20;
+const t = setInterval(() => { s--; document.getElementById('timer').textContent = s > 0 ? 'Expira em ' + s + 's' : 'QR expirado — recarregue para novo código'; if(s<=0) clearInterval(t); }, 1000);
+</script>
+</body>
+</html>

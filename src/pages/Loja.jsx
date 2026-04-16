@@ -1186,7 +1186,7 @@ export function Loja() {
         setCheckoutLoading(true);
         try {
             const gateway = await getActiveGateway();
-            const providerName = gateway === 'amplopay' ? 'amplopay' : 'banco_babylon';
+            const providerName = gateway === 'syncpay' ? 'syncpay' : gateway === 'amplopay' ? 'amplopay' : gateway === 'enkibank' ? 'enkibank' : 'banco_babylon';
             const idempotencyKey = buildCheckoutIdempotencyKey(user.id);
             const baseMetadata = sanitizePayloadForDatabase({
                 source: 'wallet_topup',
@@ -1423,7 +1423,7 @@ export function Loja() {
             }
 
             const gateway = await getActiveGateway();
-            const providerName = gateway === 'amplopay' ? 'amplopay' : 'banco_babylon';
+            const providerName = gateway === 'syncpay' ? 'syncpay' : gateway === 'amplopay' ? 'amplopay' : gateway === 'enkibank' ? 'enkibank' : 'banco_babylon';
 
             const idempotencyKey = buildCheckoutIdempotencyKey(user.id);
             const checkoutAccessItems = cartItems.map((item) => ({

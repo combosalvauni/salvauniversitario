@@ -206,3 +206,60 @@ export function setPaymentGateway(gateway) {
     prefix: '/api/admin',
   });
 }
+
+// ── WhatsApp Admin ──
+
+export function getWhatsAppStatus() {
+  return proxyRequest('/whatsapp-status', { prefix: '/api/admin' });
+}
+
+export function getWhatsAppTemplates() {
+  return proxyRequest('/whatsapp-templates', { prefix: '/api/admin' });
+}
+
+export function getWhatsAppConfig() {
+  return proxyRequest('/whatsapp-config', { prefix: '/api/admin' });
+}
+
+export function saveWhatsAppConfig(config) {
+  return proxyRequest('/whatsapp-config', {
+    method: 'PUT',
+    body: config,
+    prefix: '/api/admin',
+  });
+}
+
+export function reconnectWhatsApp() {
+  return proxyRequest('/whatsapp-reconnect', {
+    method: 'POST',
+    prefix: '/api/admin',
+  });
+}
+
+export function sendWhatsAppTest(payload) {
+  return proxyRequest('/whatsapp-send-test', {
+    method: 'POST',
+    body: payload,
+    prefix: '/api/admin',
+  });
+}
+
+export async function uploadWhatsAppAudio(file, planKey) {
+  const formData = new FormData();
+  formData.append('audio', file);
+  if (planKey) formData.append('planKey', planKey);
+  const baseUrl = resolveProxyBaseUrl();
+  const url = `${baseUrl}/api/admin/whatsapp-upload-audio`;
+  const { data: { session } } = await supabase.auth.getSession();
+  const accessToken = session?.access_token || null;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+    },
+    body: formData,
+  });
+  const json = await res.json();
+  if (!res.ok) throw new Error(json?.error || 'Upload falhou');
+  return json;
+}

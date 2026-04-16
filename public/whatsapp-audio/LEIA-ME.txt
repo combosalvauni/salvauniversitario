@@ -1,0 +1,12 @@
+Coloque aqui o arquivo de áudio de boas-vindas.
+
+Formato recomendado: .ogg (Opus) — funciona como voice note no WhatsApp.
+
+Para converter um MP3 para OGG Opus (instale ffmpeg):
+  ffmpeg -i boas-vindas.mp3 -c:a libopus -b:a 64k boas-vindas.ogg
+
+A URL do áudio será:
+  https://api.combosalvauniversitario.site/whatsapp-audio/boas-vindas.ogg
+
+Preencha no .env:
+  WHATSAPP_AUDIO_URL=https://api.combosalvauniversitario.site/whatsapp-audio/boas-vindas.ogg

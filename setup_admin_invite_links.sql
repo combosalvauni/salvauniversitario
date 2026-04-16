@@ -34,6 +34,7 @@ create index if not exists admin_invite_links_created_at_idx
 create or replace function public.touch_updated_at()
 returns trigger
 language plpgsql
+set search_path = public
 as $$
 begin
   new.updated_at = timezone('utc'::text, now());

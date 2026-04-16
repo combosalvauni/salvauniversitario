@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Layers, Users, Plus, Edit, Trash2, Search, CheckCircle, XCircle, Loader2, KeyRound, ChevronUp, ChevronDown, GripVertical, MessageSquare, ShoppingCart, AlertTriangle, Link2 } from 'lucide-react';
+import { Layers, Users, Plus, Edit, Trash2, Search, CheckCircle, XCircle, Loader2, KeyRound, ChevronUp, ChevronDown, GripVertical, MessageSquare, ShoppingCart, AlertTriangle, Link2, History } from 'lucide-react';
 import { Reorder, useDragControls } from 'framer-motion';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
@@ -10,6 +10,8 @@ import { supabase } from '../lib/supabase';
 import { deleteAdminUser, setAdminUserWalletBalance } from '../lib/babylonApi';
 import { PlansSettingsPanel } from '../components/admin/PlansSettingsPanel';
 import { InviteLinksPanel } from '../components/admin/InviteLinksPanel';
+import { GatewayTogglePanel } from '../components/admin/GatewayTogglePanel';
+import { WhatsAppPanel } from '../components/admin/WhatsAppPanel';
 
 const STREAMING_NAME_HINTS = [
     'netflix', 'prime', 'amazonprime', 'disney', 'hbo', 'max', 'globoplay', 'globopay', 'youtube',
@@ -193,9 +195,9 @@ export function Admin() {
 
     const defaultSupportForm = {
         email_title: 'E-mail de Suporte',
-        email_value: 'contato@concursaflix.com',
+        email_value: 'contato@combosalvauniversitario.site',
         email_button_text: 'Entrar em Contato',
-        email_url: 'mailto:contato@concursaflix.com',
+        email_url: 'mailto:contato@combosalvauniversitario.site',
         whatsapp_title: 'WhatsApp',
         whatsapp_value: '55 16 99885-9608',
         whatsapp_button_text: 'Entrar em Contato',
@@ -209,6 +211,7 @@ export function Admin() {
     const [alertsLoading, setAlertsLoading] = useState(false);
     const [securityAlerts, setSecurityAlerts] = useState([]);
     const [alertsLastUpdatedAt, setAlertsLastUpdatedAt] = useState(null);
+    const [recentAccessGrants, setRecentAccessGrants] = useState([]);
 
     const [isPlatformModalOpen, setIsPlatformModalOpen] = useState(false);
     const [platformEditingId, setPlatformEditingId] = useState(null);
@@ -1077,6 +1080,128 @@ export function Admin() {
         }
 
         setSecurityAlerts(alerts);
+
+        // Histórico completo de acessos liberados
+        const [benefitsResult, adminCreditsResult, assignmentsHistoryResult] = await Promise.all([
+            supabase
+                .from('checkout_pending_benefits')
+                .select('id, payer_email, credit_amount, amount_cents, activate_store, status, provider_name, applied_at, created_at, profile_id, metadata')
+                .eq('status', 'applied')
+                .order('applied_at', { ascending: false })
+                .limit(200),
+            supabase
+                .from('wallet_transactions')
+                .select('id, profile_id, amount, source, description, created_at, metadata')
+                .eq('source', 'admin_manual_credit')
+                .order('created_at', { ascending: false })
+                .limit(200),
+            supabase
+                .from('platform_account_assignments')
+                .select('id, profile_id, account_id, note, created_at, revoked_at')
+                .order('created_at', { ascending: false })
+                .limit(200),
+        ]);
+
+        const appliedBenefits = benefitsResult.data || [];
+        const adminCredits = adminCreditsResult.data || [];
+        const assignmentsHistory = assignmentsHistoryResult.data || [];
+
+        // Buscar nomes das contas/plataformas vinculadas
+        const assignmentAccountIds = Array.from(new Set(assignmentsHistory.map((r) => r.account_id).filter(Boolean)));
+        const accountPlatformMap = new Map();
+        if (assignmentAccountIds.length > 0) {
+            const { data: accRows } = await supabase
+                .from('platform_accounts')
+                .select('id, label, platform_id, platforms(name)')
+                .in('id', assignmentAccountIds);
+            (accRows || []).forEach((a) => accountPlatformMap.set(a.id, {
+                accountLabel: a.label || '',
+                platformName: a.platforms?.name || '',
+            }));
+        }
+
+        const historyProfileIds = Array.from(new Set([
+            ...appliedBenefits.map((r) => r.profile_id).filter(Boolean),
+            ...adminCredits.map((r) => r.profile_id).filter(Boolean),
+            ...assignmentsHistory.map((r) => r.profile_id).filter(Boolean),
+        ]));
+        const historyProfileMap = new Map();
+        if (historyProfileIds.length > 0) {
+            const { data: hProfiles } = await supabase
+                .from('profiles')
+                .select('id, email, full_name')
+                .in('id', historyProfileIds);
+            (hProfiles || []).forEach((p) => historyProfileMap.set(p.id, p));
+        }
+
+        const benefitRows = appliedBenefits.map((row) => {
+            const profile = row.profile_id ? historyProfileMap.get(row.profile_id) : null;
+            return {
+                id: row.id,
+                email: row.payer_email,
+                profileName: profile?.full_name || null,
+                profileEmail: profile?.email || null,
+                creditAmount: row.credit_amount,
+                amountCents: row.amount_cents,
+                storeActivated: row.activate_store,
+                providerName: row.provider_name,
+                appliedAt: row.applied_at,
+                createdAt: row.created_at,
+                source: row.metadata?.source || null,
+                grantType: 'checkout',
+                detail: null,
+            };
+        });
+
+        const adminRows = adminCredits.map((row) => {
+            const profile = row.profile_id ? historyProfileMap.get(row.profile_id) : null;
+            return {
+                id: `admin_${row.id}`,
+                email: profile?.email || '—',
+                profileName: profile?.full_name || null,
+                profileEmail: profile?.email || null,
+                creditAmount: Number(row.amount || 0),
+                amountCents: 0,
+                storeActivated: false,
+                providerName: null,
+                appliedAt: row.created_at,
+                createdAt: row.created_at,
+                source: 'admin_manual',
+                grantType: 'admin',
+                detail: null,
+            };
+        });
+
+        const assignmentRows = assignmentsHistory.map((row) => {
+            const profile = row.profile_id ? historyProfileMap.get(row.profile_id) : null;
+            const acc = accountPlatformMap.get(row.account_id);
+            const isAuto = row.note && row.note.startsWith('Acesso automático via');
+            return {
+                id: `assign_${row.id}`,
+                email: profile?.email || '—',
+                profileName: profile?.full_name || null,
+                profileEmail: profile?.email || null,
+                creditAmount: 0,
+                amountCents: 0,
+                storeActivated: false,
+                providerName: null,
+                appliedAt: row.created_at,
+                createdAt: row.created_at,
+                source: isAuto ? 'auto_assignment' : 'admin_assignment',
+                grantType: 'acesso',
+                detail: acc ? `${acc.platformName}${acc.accountLabel ? ` (${acc.accountLabel})` : ''}` : (row.note || null),
+                revoked: !!row.revoked_at,
+            };
+        });
+
+        const merged = [...benefitRows, ...adminRows, ...assignmentRows].sort((a, b) => {
+            const da = new Date(a.appliedAt || a.createdAt).getTime() || 0;
+            const db = new Date(b.appliedAt || b.createdAt).getTime() || 0;
+            return db - da;
+        });
+
+        setRecentAccessGrants(merged);
+
         setAlertsLastUpdatedAt(new Date().toISOString());
         setAlertsLoading(false);
     }
@@ -1179,18 +1304,22 @@ export function Admin() {
             return;
         }
 
+        const now = new Date();
         const nowIso = nowIsoNoMs();
         const activeAssignments = await supabase
             .from('platform_account_assignments')
-            .select('account_id')
+            .select('account_id, valid_until')
             .is('revoked_at', null)
             .lte('valid_from', nowIso)
-            .or(`valid_until.is.null,valid_until.gt.${nowIso}`)
             .in('account_id', accountIds);
 
         if (!activeAssignments.error) {
             const counts = {};
             for (const row of (activeAssignments.data || [])) {
+                // Verificar se não venceu
+                if (row.valid_until && new Date(row.valid_until) < now) {
+                    continue;
+                }
                 counts[row.account_id] = (counts[row.account_id] || 0) + 1;
             }
             setPlatformAccountSeatCounts(counts);
@@ -1885,6 +2014,24 @@ export function Admin() {
                         Suporte
                     </button>
                     <button
+                        onClick={() => setActiveTab('gateway')}
+                        className={cn(
+                            "px-4 py-2 rounded-lg text-sm font-medium transition-colors",
+                            activeTab === 'gateway' ? "bg-primary text-white shadow-lg" : "text-gray-400 hover:text-white"
+                        )}
+                    >
+                        Gateway
+                    </button>
+                    <button
+                        onClick={() => setActiveTab('whatsapp')}
+                        className={cn(
+                            "px-4 py-2 rounded-lg text-sm font-medium transition-colors",
+                            activeTab === 'whatsapp' ? "bg-primary text-white shadow-lg" : "text-gray-400 hover:text-white"
+                        )}
+                    >
+                        WhatsApp
+                    </button>
+                    <button
                         onClick={() => setActiveTab('alerts')}
                         className={cn(
                             "px-4 py-2 rounded-lg text-sm font-medium transition-colors",
@@ -2005,7 +2152,12 @@ export function Admin() {
 
             {activeTab === 'invites' && <InviteLinksPanel />}
 
+            {activeTab === 'gateway' && <GatewayTogglePanel />}
+
+            {activeTab === 'whatsapp' && <WhatsAppPanel />}
+
             {activeTab === 'alerts' && (
+                <>
                 <Card>
                     <CardHeader className="flex-col sm:flex-row sm:items-center justify-between gap-4">
                         <div>
@@ -2088,6 +2240,78 @@ export function Admin() {
                         )}
                     </CardContent>
                 </Card>
+
+                {/* Histórico de acessos liberados */}
+                <Card className="mt-6">
+                    <CardHeader>
+                        <CardTitle className="flex items-center gap-2">
+                            <History className="h-5 w-5 text-primary" /> Histórico de Acessos Liberados
+                        </CardTitle>
+                        <p className="text-xs text-gray-400 mt-1">Histórico completo — checkouts pagos, créditos manuais e liberações de acesso a plataformas.</p>
+                    </CardHeader>
+                    <CardContent>
+                        {alertsLoading ? (
+                            <div className="p-8 flex justify-center"><Loader2 className="animate-spin text-primary" /></div>
+                        ) : recentAccessGrants.length === 0 ? (
+                            <p className="text-sm text-gray-400">Nenhum registro de acesso liberado.</p>
+                        ) : (
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-sm">
+                                    <thead>
+                                        <tr className="border-b border-white/10 text-left text-xs text-gray-400 uppercase tracking-wide">
+                                            <th className="py-2 pr-3">Usuário</th>
+                                            <th className="py-2 pr-3">Tipo</th>
+                                            <th className="py-2 pr-3">Detalhe</th>
+                                            <th className="py-2 pr-3">Créditos</th>
+                                            <th className="py-2 pr-3">Valor</th>
+                                            <th className="py-2 pr-3">Origem</th>
+                                            <th className="py-2 pr-3">Data</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {recentAccessGrants.map((grant) => (
+                                            <tr key={grant.id} className={cn("border-b border-white/5 hover:bg-white/5", grant.revoked && "opacity-50")}>
+                                                <td className="py-2 pr-3">
+                                                    <p className="text-white text-sm">{grant.profileName || grant.email}</p>
+                                                    {grant.profileName && grant.profileEmail && (
+                                                        <p className="text-gray-500 text-xs">{grant.profileEmail}</p>
+                                                    )}
+                                                    {!grant.profileName && grant.profileEmail && grant.profileEmail !== grant.email && (
+                                                        <p className="text-gray-500 text-xs">{grant.profileEmail}</p>
+                                                    )}
+                                                </td>
+                                                <td className="py-2 pr-3">
+                                                    {grant.grantType === 'admin'
+                                                        ? <span className="inline-block rounded-full bg-yellow-500/20 border border-yellow-500/30 text-yellow-300 text-xs px-2 py-0.5 font-medium">Crédito Admin</span>
+                                                        : grant.grantType === 'acesso'
+                                                        ? <span className={cn("inline-block rounded-full text-xs px-2 py-0.5 font-medium", grant.revoked ? "bg-red-500/20 border border-red-500/30 text-red-300" : "bg-purple-500/20 border border-purple-500/30 text-purple-300")}>{grant.revoked ? 'Acesso Revogado' : 'Acesso Liberado'}</span>
+                                                        : <span className="inline-block rounded-full bg-blue-500/20 border border-blue-500/30 text-blue-300 text-xs px-2 py-0.5 font-medium">Checkout</span>
+                                                    }
+                                                </td>
+                                                <td className="py-2 pr-3 text-gray-300 text-xs">
+                                                    {grant.detail || (grant.storeActivated ? 'Loja ativada' : '—')}
+                                                </td>
+                                                <td className="py-2 pr-3 text-green-400 font-semibold">{grant.creditAmount > 0 ? `+${grant.creditAmount}` : '—'}</td>
+                                                <td className="py-2 pr-3 text-gray-300">{grant.amountCents > 0 ? `R$ ${(grant.amountCents / 100).toFixed(2)}` : '—'}</td>
+                                                <td className="py-2 pr-3 text-gray-400 text-xs">
+                                                    {grant.source === 'admin_manual' ? 'Painel Admin'
+                                                        : grant.source === 'admin_assignment' ? 'Admin (manual)'
+                                                        : grant.source === 'auto_assignment' ? 'Automático (checkout)'
+                                                        : grant.source === 'checkout_status_poll_fallback' ? 'Polling'
+                                                        : grant.source === 'first_offer_public_checkout' ? 'Checkout público'
+                                                        : grant.source === 'webhook' ? 'Webhook'
+                                                        : grant.source || grant.providerName || '—'}
+                                                </td>
+                                                <td className="py-2 pr-3 text-gray-400 text-xs whitespace-nowrap">{formatAlertDateTime(grant.appliedAt)}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
+                    </CardContent>
+                </Card>
+                </>
             )}
 
             {activeTab === 'store' && (

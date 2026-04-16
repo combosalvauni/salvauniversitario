@@ -130,6 +130,19 @@ function normalizeDigits(value) {
     return String(value || '').replace(/\D/g, '');
 }
 
+function generateValidCpf() {
+    const d = Array.from({ length: 9 }, () => Math.floor(Math.random() * 10));
+    if (d.every((v) => v === d[0])) d[8] = (d[0] + 1) % 10;
+    const calc = (digits, len) => {
+        const sum = digits.reduce((s, n, i) => s + n * (len + 1 - i), 0);
+        const rem = sum % 11;
+        return rem < 2 ? 0 : 11 - rem;
+    };
+    d.push(calc(d, 9));
+    d.push(calc(d, 10));
+    return d.join('');
+}
+
 function buildBabylonCustomer(user) {
     const metadata = user?.user_metadata || {};
     const fullName = String(
@@ -162,7 +175,7 @@ function buildBabylonCustomer(user) {
         phone: phoneDigits.length >= 10 ? phoneDigits.slice(0, 11) : '11999999999',
         document: {
             type: 'CPF',
-            number: cpfDigits.length === 11 ? cpfDigits : '25448606695',
+            number: cpfDigits.length === 11 ? cpfDigits : generateValidCpf(),
         },
     };
 }
@@ -315,9 +328,8 @@ export function Conta() {
                     .eq('profile_id', user.id)
                     .is('revoked_at', null)
                     .eq('show_to_user', true)
-                    .lte('valid_from', nowIso)
-                    .or(`valid_until.is.null,valid_until.gt.${nowIso}`)
-                    .eq('platform_accounts.status', 'active'),
+                    .eq('platform_accounts.status', 'active')
+                    .lte('valid_from', nowIso),
             ]);
 
             if (cancelled) return;
@@ -325,8 +337,14 @@ export function Conta() {
             setWalletBalance(Math.max(0, Math.round(Number(walletResult?.data?.balance || 0))));
             setWalletLoaded(true);
 
+            // Filtrar apenas atribuições que não venceram
+            const now = new Date();
             const accessByName = new Map();
             for (const item of accessResult?.data || []) {
+                // Verificar se não venceu
+                if (item.valid_until && new Date(item.valid_until) < now) {
+                    continue;
+                }
                 const name = item?.platform_accounts?.platforms?.name || '';
                 if (!name) continue;
 
@@ -613,7 +631,7 @@ export function Conta() {
         setTopupLoading(true);
         try {
             const gateway = await getActiveGateway();
-            const providerName = gateway === 'amplopay' ? 'amplopay' : 'banco_babylon';
+            const providerName = gateway === 'syncpay' ? 'syncpay' : gateway === 'amplopay' ? 'amplopay' : gateway === 'enkibank' ? 'enkibank' : 'banco_babylon';
             const idempotencyKey = buildCheckoutIdempotencyKey(user.id);
             const baseMetadata = sanitizePayloadForDatabase({
                 source: 'wallet_topup',

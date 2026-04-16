@@ -18,7 +18,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Urbanist:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="styles.css?v=20260408-phone-mobile" />
   </head>
   <body>
     <main class="page-bg">
@@ -83,17 +83,13 @@
                 <span>+55</span>
                 <em>▾</em>
               </button>
-              <button id="ddd-btn" type="button" class="combo-btn ddd-btn" role="combobox" aria-expanded="false" aria-controls="ddd-dropdown">
-                <span>DDD</span>
-                <em>▾</em>
-              </button>
               <div class="input-icon-wrap phone-input-wrap">
                 <span class="field-icon" aria-hidden="true">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path>
                   </svg>
                 </span>
-                <input id="phone-input" type="tel" inputmode="numeric" placeholder="Digite seu telefone" autocomplete="tel-national" />
+                <input id="phone-input" type="tel" inputmode="numeric" placeholder="(11) 99999-9999" autocomplete="tel-national" />
               </div>
 
               <div id="country-dropdown" class="phone-dropdown country-dropdown" role="listbox" aria-label="Selecionar país">
@@ -105,17 +101,6 @@
                   <input id="country-search" class="phone-dropdown-search" type="text" placeholder="Buscar país..." autocomplete="off" />
                 </div>
                 <div id="country-list" class="phone-dropdown-list"></div>
-              </div>
-
-              <div id="ddd-dropdown" class="phone-dropdown ddd-dropdown" role="listbox" aria-label="Selecionar DDD">
-                <div class="phone-dropdown-search-wrap">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <circle cx="11" cy="11" r="8"></circle>
-                    <path d="m21 21-4.3-4.3"></path>
-                  </svg>
-                  <input id="ddd-search" class="phone-dropdown-search" type="text" placeholder="Buscar DDD..." autocomplete="off" />
-                </div>
-                <div id="ddd-list" class="phone-dropdown-list"></div>
               </div>
             </div>
             <p id="phone-error" class="field-error" aria-live="polite"></p>
@@ -341,15 +326,15 @@
         </div>
 
         <div class="checkout-footer-bottom">
-          <span>Você está em uma página de checkout segura, criada com a tecnologia Mercado Pago. A responsabilidade pela oferta é do vendedor.</span>
-          <span>© 2026 ggCheckout LTDA. Todos os direitos reservados.</span>
+          <span>Você está em uma página de checkout segura, criada com a tecnologia Mercado Pago e Syncpay</span>
+            <span>© 2026 Checkout LTDA. Todos os direitos reservados.</span>
         </div>
       </div>
     </footer>
 
     <script>
-      window.FACEBOOK_PIXEL_ID = window.FACEBOOK_PIXEL_ID || "1580553502953265";
+      window.FACEBOOK_PIXEL_ID = window.FACEBOOK_PIXEL_ID || "1665717361520339";
     </script>
-    <script src="script.js"></script>
+    <script src="script.js?v=20260407-ddd-inline"></script>
   </body>
 </html>

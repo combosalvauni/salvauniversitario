@@ -358,6 +358,40 @@ export const AuthProvider = ({ children }) => {
         }
     }
 
+    const signOutWithCleanup = async () => {
+        if (!isSupabaseConfigured) return { error: null };
+        
+        try {
+            // Limpa todos os dados de sessão e cache
+            await supabase.auth.signOut();
+            
+            // Limpa localStorage (exceto configurações que devem persistir)
+            const keysToRemove = [];
+            for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                if (key && (key.includes('supabase') || key.includes('auth') || key.includes('session'))) {
+                    keysToRemove.push(key);
+                }
+            }
+            keysToRemove.forEach(key => localStorage.removeItem(key));
+            
+            // Limpa sessionStorage
+            sessionStorage.clear();
+            
+            // Reseta estados locais
+            setUser(null);
+            setProfile(null);
+            bootstrappedProfileFor.current = null;
+            claimedPendingBenefitsFor.current = null;
+            claimedInviteFor.current = null;
+            
+            return { error: null };
+        } catch (error) {
+            console.error('Error during sign out:', error);
+            return { error };
+        }
+    };
+
     const value = {
         signUp: (data) => {
             if (!isSupabaseConfigured) {
@@ -369,7 +403,7 @@ export const AuthProvider = ({ children }) => {
             return supabase.auth.signUp(data);
         },
         signIn: (data) => signInWithFallback(data),
-        signOut: () => (isSupabaseConfigured ? supabase.auth.signOut() : Promise.resolve({ error: null })),
+        signOut: signOutWithCleanup,
         user,
         profile,
         profileLoading,

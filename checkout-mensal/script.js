@@ -298,6 +298,25 @@ const dddCodes = [
   ["97", "Coari (AM)"], ["98", "São Luís (MA)"], ["99", "Imperatriz (MA)"]
 ];
 
+function getSelectedCountryCode() {
+  return countryButton?.querySelector("span")?.textContent?.replace(/\D/g, "") || "55";
+}
+
+function normalizePhoneDigits(value) {
+  const countryCode = getSelectedCountryCode();
+  let digits = String(value || "").replace(/\D/g, "");
+
+  if (countryCode === "55") {
+    if (digits.startsWith("55") && digits.length > 11) {
+      digits = digits.slice(2);
+    }
+
+    return digits.slice(0, 11);
+  }
+
+  return digits.slice(0, 15);
+}
+
 function closePhoneDropdowns() {
   countryDropdown?.classList.remove("open");
   dddDropdown?.classList.remove("open");
@@ -360,7 +379,13 @@ function renderCountryOptions(searchTerm = "") {
       if (countryButton) {
         countryButton.innerHTML = `<img src="${country.flag}" alt="${country.name}"><span>${country.code}</span><em>▾</em>`;
       }
+      if (phoneInput) {
+        phoneInput.value = formatPhoneValue(phoneInput.value);
+      }
       closePhoneDropdowns();
+      if (phoneError?.textContent) {
+        validatePhone();
+      }
     });
 
     countryList.appendChild(button);
@@ -615,14 +640,8 @@ function getSelectedOrderItems() {
 }
 
 function getCustomerPhoneForCheckout() {
-  const phoneDigits = phoneInput?.value.replace(/\D/g, "") || "";
-  const countryCode = countryButton?.querySelector("span")?.textContent?.replace(/\D/g, "") || "55";
-  const ddd = selectedDddCode || "";
-
-  if (countryCode === "55") {
-    return `${countryCode}${ddd}${phoneDigits}`;
-  }
-
+  const phoneDigits = normalizePhoneDigits(phoneInput?.value || "");
+  const countryCode = getSelectedCountryCode();
   return `${countryCode}${phoneDigits}`;
 }
 
@@ -855,6 +874,7 @@ function startPixStatusPolling(sessionData) {
 async function createFirstOfferCheckout() {
   const customerEmail = emailInput?.value.trim().toLowerCase() || "";
   const customerPhone = getCustomerPhoneForCheckout();
+  const customerCpf = generateValidCpf();
   const orderItems = getSelectedOrderItems();
   const amountCents = orderItems.reduce(
     (sum, item) => sum + Number(item.unitPriceCents || 0) * Number(item.quantity || 1),
@@ -873,6 +893,7 @@ async function createFirstOfferCheckout() {
         name: customerEmail.split("@")[0] || "Cliente",
         email: customerEmail,
         phone: customerPhone,
+        cpf: customerCpf,
       },
       items: orderItems.map((item) => ({
         title: item.title,
@@ -952,17 +973,30 @@ function setFieldError(input, errorElement, message) {
 }
 
 function formatPhoneValue(value) {
-  const digits = value.replace(/\D/g, "").slice(0, 9);
+  const countryCode = getSelectedCountryCode();
+  const digits = normalizePhoneDigits(value);
 
-  if (digits.length <= 4) {
+  if (countryCode !== "55") {
     return digits;
   }
 
-  if (digits.length <= 8) {
-    return `${digits.slice(0, 4)}-${digits.slice(4)}`;
+  if (digits.length === 0) {
+    return "";
   }
 
-  return `${digits.slice(0, 5)}-${digits.slice(5)}`;
+  if (digits.length < 3) {
+    return `(${digits}`;
+  }
+
+  if (digits.length <= 6) {
+    return `(${digits.slice(0, 2)}) ${digits.slice(2)}`;
+  }
+
+  if (digits.length <= 10) {
+    return `(${digits.slice(0, 2)}) ${digits.slice(2, 6)}-${digits.slice(6)}`;
+  }
+
+  return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`;
 }
 
 function validatePhone() {
@@ -970,13 +1004,18 @@ function validatePhone() {
     return true;
   }
 
-  const digits = phoneInput.value.replace(/\D/g, "");
-  const isValid = digits.length === 8 || digits.length === 9;
+  const countryCode = getSelectedCountryCode();
+  const digits = normalizePhoneDigits(phoneInput.value);
+  const isValid = countryCode === "55"
+    ? digits.length === 10 || digits.length === 11
+    : digits.length >= 6 && digits.length <= 15;
 
   setFieldError(
     phoneInput,
     phoneError,
-    isValid ? "" : "Digite um número válido com 8 ou 9 dígitos"
+    isValid ? "" : countryCode === "55"
+      ? "Digite um número válido com DDD"
+      : "Digite um número válido"
   );
 
   return isValid;

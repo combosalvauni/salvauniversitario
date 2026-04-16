@@ -3,7 +3,21 @@
 -- This uses a helper that is NOT executable by normal clients.
 create extension if not exists "uuid-ossp";
 
-select public.make_admin('admin@concursaflix.com');
+do $$
+declare
+  v_admin_email text := 'admin@concursaflix.com';
+begin
+  if exists (
+    select 1
+    from auth.users
+    where lower(email) = lower(v_admin_email)
+  ) then
+    perform public.make_admin(v_admin_email);
+    raise notice '[OK] Admin privileges ensured for %', v_admin_email;
+  else
+    raise notice '[SKIP] User % not found in auth.users. Create the auth user first and rerun this script.', v_admin_email;
+  end if;
+end $$;
 
 -- Platform ordering (ensure before view uses sort_order)
 alter table public.platforms add column if not exists sort_order integer;
@@ -66,17 +80,29 @@ create policy "Admins can manage platform access"
   with check ( public.is_admin(auth.uid()) );
 
 -- View without secrets for cards/listing
-create or replace view public.platforms_public as
+drop view if exists public.platforms_public;
+
+create view public.platforms_public
+with (security_invoker = true) as
 select
-  id,
-  name,
-  description,
-  image_url,
-  status,
-  extension_link,
-  created_at,
-  sort_order
-from public.platforms;
+  p.id,
+  p.name,
+  p.description,
+  p.image_url,
+  p.status,
+  p.is_visible,
+  p.extension_link,
+  p.created_at,
+  p.sort_order,
+  p.show_account_badge,
+  p.account_badge_count,
+  (
+    select count(*)::int
+    from public.platform_accounts pa
+    where pa.platform_id = p.id
+      and pa.status = 'active'
+  ) as active_accounts_count
+from public.platforms p;
 
 grant select on public.platforms_public to authenticated;
 
