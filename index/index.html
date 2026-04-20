@@ -176,7 +176,6 @@ opacity:1!important;
 	fbq('init', '1665717361520339');
 	fbq('track', 'PageView');
 	</script>
- 	<script src="./ttq-local.js"></script>
  	<script>
 !function (w, d, t) {
   w.TiktokAnalyticsObject=t;var ttq=w[t]=w[t]||[];ttq.methods=["page","track","identify","instances","debug","on","off","once","ready","alias","group","enableCookie","disableCookie","holdConsent","revokeConsent","grantConsent"],ttq.setAndDefer=function(t,e){t[e]=function(){t.push([e].concat(Array.prototype.slice.call(arguments,0)))}};for(var i=0;i<ttq.methods.length;i++)ttq.setAndDefer(ttq,ttq.methods[i]);ttq.instance=function(t){for(
@@ -184,26 +183,8 @@ var e=ttq._i[t]||[],n=0;n<ttq.methods.length;n++)ttq.setAndDefer(e,ttq.methods[n
 ;n.type="text/javascript",n.async=!0,n.src=r+"?sdkid="+e+"&lib="+t;e=document.getElementsByTagName("script")[0];e.parentNode.insertBefore(n,e)};
 
 
-	function loadTikTokViaBlob(sdkid){
-		var base = 'https://analytics.tiktok.com/i18n/pixel/events.js?sdkid=' + encodeURIComponent(sdkid);
-		try{
-			fetch(base, {mode: 'cors'})
-				.then(function(res){ if(!res.ok) throw new Error('HTTP '+res.status); return res.text(); })
-				.then(function(code){
-					try{
-						var blob = new Blob([code], {type: 'text/javascript'});
-						var blobUrl = URL.createObjectURL(blob);
-						var s = document.createElement('script'); s.src = blobUrl; s.async = true;
-						s.onload = function(){ URL.revokeObjectURL(blobUrl); console.info('ttq: events.js loaded via blob'); };
-						s.onerror = function(){ URL.revokeObjectURL(blobUrl); console.warn('ttq: blob script error, falling back to remote'); ttq.load(sdkid); };
-						document.head.appendChild(s);
-					}catch(e){ console.warn('ttq: blob execution failed', e); ttq.load(sdkid); }
-				}).catch(function(err){ console.warn('ttq: fetch for blob failed, falling back to remote', err); ttq.load(sdkid); });
-		}catch(e){ console.warn('ttq: blob attempt failed synchronously', e); ttq.load(sdkid); }
-	}
-
-	loadTikTokViaBlob('D470KQRC77U2U4VHN6A0');
-	setTimeout(function(){ try{ ttq.page && ttq.page(); }catch(e){} }, 500);
+  ttq.load('D7J850JC77UDQGOITOF0');
+  ttq.page();
 }(window, document, 'ttq');
 </script>
 	</head>
@@ -297,7 +278,7 @@ var e=ttq._i[t]||[],n=0;n<ttq.methods.length;n++)ttq.setAndDefer(e,ttq.methods[n
 					<div id="paradisePlayer_1774451639426Container" class="paradise-player-container" style="position: relative; width: 100%; max-width: 800px; margin: 20px auto;">
 						<div id="paradisePlayer_1774451639426Wrapper" style="position: relative; width: 100%; padding-bottom: 56.25%; background: #000; border-radius: 12px; overflow: hidden; box-shadow: 0 0 20px #ff660050, 0 0 5px #ff660080;">
 							<video id="paradisePlayer_1774451639426" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; cursor: pointer;" playsinline webkit-playsinline preload="auto" poster="https://combosalvauniversitario.site/Combo%20Salva%20Universit%C3%A1rios%20-%20Assine%20j%C3%A1_files/background-da-VSL1.jpg">
-								<source src="https://cdn.concursaflix.com/video/courses/teste/SALVA-UNIVERSITARIO-O-COMBO-DO-ESTUDANTE_Media_GPGg-5k5om8_001_1080p.mp4?exp=2524608000&amp;token=ff51371a48894ff89a19eb49e41a72fb7208aa0e670bcef0a76abd64fcb9ffe1" type="video/mp4">
+								<source src="https://cdn.concursaflix.com/salvauni/SALVA-UNIVERSITARIO-O-COMBO-DO-ESTUDANTE_Media_GPGg-5k5om8_001_1080p.mp4" type="video/mp4">
 								Seu navegador não suporta vídeos HTML5.
 							</video>
 							<div id="paradisePlayer_1774451639426PreviewPlay" style="position: absolute; inset: 0; display: flex; justify-content: center; align-items: center; z-index: 15; pointer-events: none; opacity: 1; transition: opacity 0.4s ease;">
