@@ -134,39 +134,18 @@
 	</script>
 	<!-- End Meta Pixel Code -->
  	<!-- TikTok Pixel Code Start -->
- 	<script src="./ttq-local.js"></script>
- 	<script>
+<script>
 !function (w, d, t) {
   w.TiktokAnalyticsObject=t;var ttq=w[t]=w[t]||[];ttq.methods=["page","track","identify","instances","debug","on","off","once","ready","alias","group","enableCookie","disableCookie","holdConsent","revokeConsent","grantConsent"],ttq.setAndDefer=function(t,e){t[e]=function(){t.push([e].concat(Array.prototype.slice.call(arguments,0)))}};for(var i=0;i<ttq.methods.length;i++)ttq.setAndDefer(ttq,ttq.methods[i]);ttq.instance=function(t){for(
 var e=ttq._i[t]||[],n=0;n<ttq.methods.length;n++)ttq.setAndDefer(e,ttq.methods[n]);return e},ttq.load=function(e,n){var r="https://analytics.tiktok.com/i18n/pixel/events.js",o=n&&n.partner;ttq._i=ttq._i||{},ttq._i[e]=[],ttq._i[e]._u=r,ttq._t=ttq._t||{},ttq._t[e]=+new Date,ttq._o=ttq._o||{},ttq._o[e]=n||{};n=document.createElement("script")
 ;n.type="text/javascript",n.async=!0,n.src=r+"?sdkid="+e+"&lib="+t;e=document.getElementsByTagName("script")[0];e.parentNode.insertBefore(n,e)};
 
 
-	// Try to fetch events.js and execute it from a Blob URL (may bypass some ORB/COEP blocks).
-	function loadTikTokViaBlob(sdkid){
-		var base = 'https://analytics.tiktok.com/i18n/pixel/events.js?sdkid=' + encodeURIComponent(sdkid);
-		try{
-			fetch(base, {mode: 'cors'})
-				.then(function(res){ if(!res.ok) throw new Error('HTTP '+res.status); return res.text(); })
-				.then(function(code){
-					try{
-						var blob = new Blob([code], {type: 'text/javascript'});
-						var blobUrl = URL.createObjectURL(blob);
-						var s = document.createElement('script'); s.src = blobUrl; s.async = true;
-						s.onload = function(){ URL.revokeObjectURL(blobUrl); console.info('ttq: events.js loaded via blob'); };
-						s.onerror = function(){ URL.revokeObjectURL(blobUrl); console.warn('ttq: blob script error, falling back to remote'); ttq.load(sdkid); };
-						document.head.appendChild(s);
-					}catch(e){ console.warn('ttq: blob execution failed', e); ttq.load(sdkid); }
-				}).catch(function(err){ console.warn('ttq: fetch for blob failed, falling back to remote', err); ttq.load(sdkid); });
-		}catch(e){ console.warn('ttq: blob attempt failed synchronously', e); ttq.load(sdkid); }
-	}
-
-	loadTikTokViaBlob('D470KQRC77U2U4VHN6A0');
-	// Ensure a PageView is emitted even if the SDK loads asynchronously or is blocked.
-	setTimeout(function(){ try{ ttq.page && ttq.page(); }catch(e){} }, 500);
+  ttq.load('D7J850JC77UDQGOITOF0');
+  ttq.page();
 }(window, document, 'ttq');
 </script>
-	<!-- TikTok Pixel Code End -->
+<!-- TikTok Pixel Code End -->
 	</head>
 <body data-rsssl="1" class="home page-template page-template-elementor_canvas page page-id-802 elementor-default elementor-template-canvas elementor-kit-799 elementor-page elementor-page-802 e--ua-blink e--ua-chrome e--ua-webkit" data-elementor-device-mode="desktop" cz-shortcut-listen="true">
 <!-- Meta Pixel (noscript) -->

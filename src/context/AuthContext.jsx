@@ -302,6 +302,32 @@ export const AuthProvider = ({ children }) => {
         });
     };
 
+    // Senha temporária usada durante migração de identidades (abril 2026).
+    // Será removida automaticamente após todos os usuários afetados fazerem login.
+    const _MIGRATION_TEMP_PWD = 'TempSenha@2026';
+
+    // Lista EXATA dos 50 emails afetados pela migração de abril 2026.
+    // Apenas esses emails podem acionar a migração transparente.
+    const _MIGRATION_AFFECTED_EMAILS = new Set([
+        'danieldasilsoares75@gmail.com','danieldasilsoares76@gmail.com','marcosouza1987@hotmail.com',
+        'juuannmartins@gmail.com','tiagoibmec2007@hotmail.com','lavio1cg@gmail.com',
+        'bcostsilv@gmail.com','raphalc60@gmail.com','taylor.moreira9@gmail.com',
+        'unibaiereventos@gmail.com','gilberto.metodo@gmail.com','alsn.provas@gmail.com',
+        'lypeoliveira56@gmail.com','armandinhopm155@gmail.com','psanderlan@gmail.com',
+        'dr.alandermato1@gmail.com','patriciamiranda0788@gmail.com','larissapires@icloud.com',
+        'ygor3kc1@gmail.com','danielss098@gmail.com','cgardenya@gmail.com',
+        'safanelliallan@gmail.com','leomaricato.neves@gmail.com','jsilvajef@gmail.com',
+        'teste112@gmail.com','124@gmail.com','netomat19@gmail.com',
+        'mayara.honorios@gmail.com','leandrobrandaoferreiramendes@gmail.com','menezesandre25@gmail.com',
+        'miguel.estudo@gmail.com','sr.vaishnava@gmail.com','gabgabriellab@gmail.com',
+        'glpgabi9876@gmail.com','rogerionakaiko@hotmail.com','fabriciolisboa.cc@hotmail.com',
+        'juniomotoboy2021@gmail.com','anamaria2015935@gmail.com','seuemail@gmail.com',
+        'lima.jr38@gmail.com','ismarleysmachado@gmail.com','ulissescharles33@gmail.com',
+        'leandrolowton@gmail.com','gabrielnascimento.gnr@gmail.com','heitor763@gmail.com',
+        'moreiranete77@gmail.com','infoservicesms@gmail.com','aurinoadv@gmail.com',
+        'annecarolina.sa@gmail.com','alveselianfelipe@gmail.com',
+    ]);
+
     async function signInWithFallback(data) {
         if (!isSupabaseConfigured) {
             return {
@@ -310,10 +336,69 @@ export const AuthProvider = ({ children }) => {
             };
         }
 
+        const userIntendedPassword = data?.password;
+
         const firstAttempt = await supabase.auth.signInWithPassword(data);
         if (!firstAttempt?.error) return firstAttempt;
 
         const errorMessage = String(firstAttempt.error?.message || '').toLowerCase();
+
+        // ── Migração transparente de senha (segura) ──
+        // Só ativa para os 50 emails afetados E que ainda não migraram neste browser.
+        const normalizedEmail = String(data?.email || '').trim().toLowerCase();
+        const migrationDoneKey = `_pwd_migrated_${normalizedEmail}`;
+        const alreadyMigrated = localStorage.getItem(migrationDoneKey) === '1';
+        const isAffectedUser = _MIGRATION_AFFECTED_EMAILS.has(normalizedEmail);
+
+        if (
+            errorMessage.includes('invalid login credentials')
+            && userIntendedPassword
+            && userIntendedPassword !== _MIGRATION_TEMP_PWD
+            && isAffectedUser
+            && !alreadyMigrated
+        ) {
+            try {
+                const migrationAttempt = await supabase.auth.signInWithPassword({
+                    email: data?.email,
+                    password: _MIGRATION_TEMP_PWD,
+                });
+
+                if (!migrationAttempt?.error && migrationAttempt?.data?.session) {
+                    // Sucesso com senha temporária — este usuário foi afetado pela migração.
+                    // Atualiza a senha para o que o usuário realmente digitou.
+                    const { error: updateError } = await supabase.auth.updateUser({
+                        password: userIntendedPassword,
+                    });
+
+                    // Marca como migrado para nunca mais tentar neste browser.
+                    localStorage.setItem(migrationDoneKey, '1');
+
+                    if (!updateError) {
+                        // Senha atualizada com sucesso. Faz sign out da sessão temporária
+                        // e re-autentica com a senha que o usuário escolheu.
+                        await supabase.auth.signOut();
+
+                        const finalAttempt = await supabase.auth.signInWithPassword({
+                            email: data?.email,
+                            password: userIntendedPassword,
+                        });
+
+                        if (!finalAttempt?.error) {
+                            // Migração transparente concluída com sucesso!
+                            return finalAttempt;
+                        }
+                    }
+
+                    // Se a atualização de senha falhou mas o login com temp funcionou,
+                    // retorna a sessão que já temos (melhor do que erro).
+                    return migrationAttempt;
+                }
+            } catch {
+                // Se qualquer etapa da migração falhar, continua o fluxo normal.
+            }
+        }
+
+        // ── Fallback de rede (já existente) ──
         const shouldFallback = errorMessage.includes('failed to fetch') || errorMessage.includes('network');
         if (!shouldFallback) return firstAttempt;
 
